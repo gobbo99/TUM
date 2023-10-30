@@ -23,12 +23,16 @@ class TinyUrlUpdateError(Exception):
         self.status_code = status_code
 
     def __str__(self):
-        return f'{self.message}  {self.status_code}]'
+        return f'{self.message}  [{self.status_code}]'
 
 
 class InputException(Exception):
     def __init__(self, message):
         self.message = message
+
+
+class NetworkException(Exception):
+    pass
 
 
 def handle_tinyurl_response(tiny_url, response):

@@ -2,3 +2,4 @@ youtube.com
 google.com
 chat.openai.com
 lidl.de
+blockchain.com

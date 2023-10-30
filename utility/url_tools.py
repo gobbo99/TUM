@@ -11,3 +11,7 @@ def generate_unique_string(existing_strings, length=8):
 
 def check_format_vadility():
     pass
+
+
+def get_short_domain(url):
+    return '.'.join(url.split('//')[-1].split('/')[0].split('.')[-2:])
