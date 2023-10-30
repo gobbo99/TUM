@@ -1,0 +1,11 @@
+log_read.png
+cli.png
+venv/
+__pycache__/
+__init__.py
+.env
+.idea/
+.config/*
+~/
+tokens.txt
+fallback_urls.txt
