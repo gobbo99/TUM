@@ -31,6 +31,8 @@ reset = "\u001b[0m"
 
 success = f"{yellow}[{bgreen}√{yellow}]"
 error = f"{yellow}[{bred}X{yellow}]"
-info = f"{yellow}[{bwhite}\u2022{yellow}]"
+info = f"{yellow}[{bred}\u2022{yellow}]"
+warning = f"{yellow}[{bwhite}!{yellow}]"
+
 
 

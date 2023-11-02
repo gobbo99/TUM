@@ -1,39 +1,29 @@
-import os
 import configparser
+from pathlib import Path
 
-env_data = {}
+from utility.file_manipulation import read_data_from_file
 
-if os.path.exists('.env'):
-    with open('.env', 'r') as file:
-        for line in file:
-            line = line.strip()
-            if line and not line.startswith('#'):
-                key, value = line.split('=', 1)
-                env_data[key] = value
-else:
-    print('.env file not found')
-
-PING_INTERVAL = env_data['PING_DELAY'] or 30
-
-config_file = configparser.ConfigParser()
-config_file.read('config.ini')
-AUTH_TOKENS_PATH = config_file['Path']['auth_tokens_path']
-FALLBACK_URLS_PATH = config_file['Path']['fallback_urls_path']
-LOGS_PATH = config_file['Path']['logs_path']
-
-with open(f'{AUTH_TOKENS_PATH}/tokens.txt', 'r') as f:
-    token_data = f.read()
+home_dir = str(Path.home())
+VERSION = '1.0'
 
 try:
-    with open(f'{FALLBACK_URLS_PATH}/fallback_urls.txt', 'r') as f:
-        alternate_urls = f.read()
-except (FileNotFoundError, EOFError):
-    alternate_urls = ''
+    config_file = configparser.ConfigParser(allow_no_value=True)
+    config_file.read('./config/config.ini')
 
-if LOGS_PATH:
-    LOGS_PATH.rstrip('/\\')
+    LOGS_PATH = config_file.get('Path', 'logs_path').strip()
+    TOKENS_PATH = config_file.get('Path', 'auth_tokens_path').strip()
+    FALLBACK_URLS_PATH = config_file.get('Path', 'fallback_urls_path').strip()
 
-TINY_URL_AUTH_TOKENS = token_data.splitlines()
-TUNNELING_SERVICES_URLS = alternate_urls.splitlines()
+    TOKENS_SEPERATOR = config_file['Path']['auth_tokens_seperator'].strip().replace('__NEWLINE__', '\n')
+    FALLBACK_URLS_SEPERATOR = config_file['Path']['fallback_urls_seperator'].strip().replace('__NEWLINE__', '\n')
+    PING_INTERVAL = config_file['Options'].get('ping_interval').strip() or 60
 
+    AUTH_TOKENS = read_data_from_file(TOKENS_PATH, TOKENS_SEPERATOR)
+    TUNNELING_SERVICE_URLS = read_data_from_file(FALLBACK_URLS_PATH, FALLBACK_URLS_SEPERATOR)
 
+    if not LOGS_PATH or LOGS_PATH == '~':
+        LOGS_PATH = home_dir
+
+except Exception as e:
+    print('Configure config.ini file properly. More information in README.md!')
+    exit(1)

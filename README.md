@@ -2,33 +2,37 @@
 ## Tinyurl manager
 
 ## Overview
-#### This python package enables you to generate and control many tinyurl links under domain 'tinyurl.com' and with randomly generated 8-character alias that goes after domain, e.g : tinyurl.com/4kj95b25
+#### This python package enables you to instantly generate and control many tinyurl links and with randomly generated 8-character alias that goes after domain, e.g : tinyurl.com/4kj95b25
 
-With this python package you are able to generate and control many tinyurl instances and ***ensure that preview page doesn't display*** for all your links.
+With this python package you are able to generate and control many tinyurl instances and ***ensure that preview page doesn't display*** for all your tinyurls. Tinyurl preview page blocks users from directly accessing your url.
 
-It features fallback mechanicsm which updates redirect with url from fallback list in fallback_list file. URL Fallback list is necessary because ***Tinyurl regularly adds their own preview page.***
+All you need to do is add your tokens to ./config/tokens.txt and you are ready to go!
 
-You are able to view realtime logs of tinyurl links health in gnome-terminal that's automatically opened
+### Prerequisites
 
-Configure tokens / auto-redirects however you want in ***settings.py***
-### Requirements
-
-Python 3+
+Python 3, Linux Gnome environment
 
 GNOME Linux distro 
 
+### Installation
+
+After you cloned repository do the following:
+
+```sudo apt install python3``` - Install python3
+
+```pip install -r requirements.txt``` - Install required dependencies
+
+```apt install gnome-terminal``` - Install gnome-terminal
+***
 ### Setup
+Place your authentication tokens in ***config/tokens.txt*** 
 
-```pip install -r requirements.txt```
-```apt install gnome-terminal```
+Optionally place alternate urls in ***config/urls.txt***
 
-```python3.10 tinyurl.py```
-
-You will configure your application by adding your ***authentication tokens in 'tokens' file*** that you acquire from Tinyurl website and by optionally adding ***fallback urls in 'fallback_list' file***.
-
-Each token or url in these files must be seperated by newline.
+Complete your run configuration in ***config/config.ini*** 
 
 ### How it works
+
 
 ***create_redirect_url()*** - connects to tinyurl api and creates new tinyurl redirect to wanted url
 

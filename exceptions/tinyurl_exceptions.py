@@ -1,11 +1,13 @@
 import logging
 
-from utility import bred
 
+class TinyUrlPreviewException(Exception):
+    def __init__(self, id, url):
+        self.message = f'Preview page is blocking Tinyurl({id}) for {url}!'
+        super().__init__(self.message)
 
-class TinyUrlPreviewException(BaseException):
-    def __init__(self, message='Tinyurl preview exception occurred!'):
-        super().__init__()
+    def __str__(self):
+        return self.message
 
 
 class TinyUrlCreationError(Exception):
