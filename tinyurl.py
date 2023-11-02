@@ -1,6 +1,7 @@
 import time
 
 import requests
+from requests import RequestException
 
 import logging
 import json
@@ -11,21 +12,20 @@ from consts import BASE_URL
 from exceptions.tinyurl_exceptions import handle_tinyurl_response, TinyUrlCreationError, TinyUrlUpdateError
 from tunneling.tunnelservicehandler import TunnelServiceHandler
 
-tunneling_service = TunnelServiceHandler(settings.TUNNELING_SERVICE_URLS)
 logger = logging.getLogger('')
 SUCCESS = 25
 
 
 class TinyUrl:
 
-    def __init__(self, token, new_id):
+    def __init__(self, auth_token, fallback_urls, new_id):
+        self.tunneling_service = TunnelServiceHandler(fallback_urls)
         self.id = new_id
         self.tinyurl = None
         self.redirect_url_short = None
         self.redirect_url_long = None
-        self.auth_token = token
+        self.auth_token = auth_token
         self.existing_strings = set()
-        self.alternate_tunnel = tunneling_service.set_tunneling_service()
         self.rebuild_headers()
 
     def create_redirect_url(self, redirect_url: str):
@@ -38,27 +38,24 @@ class TinyUrl:
                 'alias': alias
                 }
 
-        status_code = None
-
         while attempts != 0:
             response = requests.post(url=request_url, headers=self.headers, data=json.dumps(data))
-            if handle_tinyurl_response(self, response) == 0:
+            result = handle_tinyurl_response(self, response)
+            if result == 0:
                 data = response.json()['data']
                 tiny_domain = data['domain']
                 self.redirect_url_long = data['url']
                 self.redirect_url_short = get_short_domain(self.redirect_url_long)
                 self.tinyurl = f"https://{tiny_domain}/{data['alias']}"
-                logger.log(SUCCESS, f'{bgreen}Tinyurl ({self.id}) successfully created!')
+                logger.log(SUCCESS, f'{green}Tinyurl ({self.id}) added!')
                 return 0
             else:
                 attempts -= 1
-                status_code = str(response.status_code)
 
-        raise TinyUrlCreationError(f'Tinyurl not created!', status_code=status_code)
+        raise TinyUrlCreationError(result)
 
     def update_redirect_service(self):
         request_url = f"{BASE_URL}/change"
-        attempts = len(settings.AUTH_TOKENS) + 3
         initial_attempts = 3
         while initial_attempts != 0:
             data = {
@@ -67,8 +64,14 @@ class TinyUrl:
                 'url': self.redirect_url_long
             }
             response = requests.patch(url=request_url, headers=self.headers, data=json.dumps(data))
-            if handle_tinyurl_response(self, response) == 0:
-                if 'tiny' in requests.head(self.tinyurl, allow_redirects=True).url:
+            try:
+                check = requests.head(self.tinyurl, allow_redirects=True)   #  do this for regular redirect too and create?
+                check.raise_for_status()
+            except RequestException:
+                break
+
+            if handle_tinyurl_response(self, check) == 0:
+                if 'tiny' in check.url:
                     time.sleep(1)
                     initial_attempts -= 1
                 else:
@@ -77,19 +80,23 @@ class TinyUrl:
                     self.redirect_url_long = data['url']
                     self.redirect_url_short = get_short_domain(self.redirect_url_long)
                     return True
+            else:
+                time.sleep(1)
+                initial_attempts -= 1
 
-        while attempts > 3:
+        attempts = 0
+        while attempts < self.tunneling_service.length:
+            print(f'attempts: {attempts}')
             data = {
                 'domain': 'tinyurl.com',
                 'alias': self.tinyurl.strip('/').split('/')[-1],
-                'url': self.alternate_tunnel
+                'url': self.tunneling_service.tunneler
             }
             response = requests.patch(url=request_url, headers=self.headers, data=json.dumps(data))
-            status_code = handle_tinyurl_response(self, response)
-            if status_code == 0:
+            if handle_tinyurl_response(self, response) == 0:
                 if 'tiny' in requests.head(self.tinyurl, allow_redirects=True).url:
-                    self.alternate_tunnel = tunneling_service.cycle_next()
-                    attempts -= 1
+                    self.tunneling_service.cycle_next()
+                    attempts += 1
                 else:
                     data = response.json()['data']
                     logger.log(SUCCESS, f"{bgreen}Tinyurl ({self.id}) redirect updated! {self.redirect_url_short} -> {data['url']}")
@@ -97,8 +104,8 @@ class TinyUrl:
                     self.redirect_url_short = get_short_domain(self.redirect_url_long)
                     return True
             else:
-                self.alternate_tunnel = tunneling_service.cycle_next()
-                attempts -= 1
+                self.tunneling_service.cycle_next()
+                attempts += 1
 
         return False
 
@@ -116,7 +123,6 @@ class TinyUrl:
             logger.log(SUCCESS, f"{bgreen}Tinyurl ({self.id}) redirect updated! {self.redirect_url_short} -> {data['url']}")
             self.redirect_url_short = get_short_domain(data['url'])
             self.redirect_url_long = data['url']
-            print(self.redirect_url_long)
             return 0
         else:
             raise TinyUrlUpdateError(response.text, response.status_code)
