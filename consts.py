@@ -1,7 +1,5 @@
 from utility.ansi_colors import bwhite, byellow, yellow
 
-BASE_URL = "https://api.tinyurl.com"
-
 menu = f'\n{byellow}SYNOPSIS: \n' \
              f'{bwhite}new <url> - {yellow}Create new tinyurl redirect url\n' \
              f'{bwhite}select <id> - {yellow}Select tinyurl instance by their id\n' \

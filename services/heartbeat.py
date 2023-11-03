@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 import requests
 
 from utility import url_tools, get_final_domain
-from exceptions.tinyurl_exceptions import TinyUrlPreviewException, NetworkException
+from exceptions.tinyurl_exceptions import TinyUrlPreviewException, RequestError
 
 
 logger = logging.getLogger('')
@@ -33,7 +33,7 @@ def status_service(tinyurl, lock, shared_data):  #  work on exception handling
                 notify_deletion(tinyurl, lock, shared_data)
                 return 0
 
-        except NetworkException as e:
+        except RequestError as e:
             logger.error(e)
             is_updated = tinyurl.update_redirect_service()
             if is_updated:
@@ -55,11 +55,11 @@ def ping_check(tinyurl, shared_data):
             if get_final_domain(response.url) == tinyurl.domain:
                 logger.log(SUCCESS, f'Tinyurl({tinyurl.id}) - {tinyurl.tinyurl}  -->  {tinyurl.domain}/')
             else:
-                logger.error(f'Tinyurl ({tinyurl.id}) - {tinyurl.tinyurl}  -->  {response.url}. Expected {tinyurl.domain}!')
+                logger.error(f'Tinyurl({tinyurl.id}) - {tinyurl.tinyurl} Wrong redirect domain! -->  {response.url}. Expected domain: {tinyurl.domain}!')
             return 0
 
         except Exception:
-            raise NetworkException(tinyurl.final_url)
+            raise RequestError(tinyurl.final_url)
 
 
 def notify_deletion(tinyurl, lock, shared_data):

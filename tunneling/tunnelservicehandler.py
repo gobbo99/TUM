@@ -2,7 +2,12 @@ class TunnelServiceHandler:
 
     def __init__(self, urls):
         self.urls: [] = urls
-        self.length: int = len(urls)
+        if not self.urls:
+            self.urls_mapping = {}
+            self.tunneler = ''
+            return
+        else:
+            self.length = len(self.urls)
         self.urls_mapping: dict = {key: False for key in self.urls}
         self.tunneler: str = self.set_tunneling_service()
 

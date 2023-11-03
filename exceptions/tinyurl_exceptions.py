@@ -11,21 +11,24 @@ class TinyUrlPreviewException(Exception):
 
 
 class TinyUrlCreationError(Exception):
-    def __init__(self, message, status_code):
-        self.message = message
+
+    def __init__(self, errors: [], status_code):
+        self.errors = errors
         self.status_code = status_code
 
     def __str__(self):
-        return f'{self.message}  [{self.status_code}]'
+        message = '\n'.join(self.errors)
+        return f'Error HTTP code: [{self.status_code}]\n{message}'
 
 
 class TinyUrlUpdateError(Exception):
-    def __init__(self, message, status_code):
-        self.message = message
+    def __init__(self, errors: [], status_code):
+        self.errors = errors
         self.status_code = status_code
 
     def __str__(self):
-        return f'{self.message}  [{self.status_code}]'
+        message = '\n'.join(self.errors)
+        return f'Error HTTP code: [{self.status_code}]\n{message}'
 
 
 class InputException(Exception):
@@ -36,10 +39,20 @@ class InputException(Exception):
         return self.message
 
 
-class NetworkException(Exception):
+class RequestError(Exception):
     def __init__(self, url):
         self.message = f'Redirect url {url} seems to be invalid!'
         super().__init__(self.message)
 
     def __str__(self):
         return self.message
+
+
+class NetworkError(Exception):
+    def __init__(self, message):
+        self.message = message
+        super().__init__(self.message)
+
+    def __str__(self):
+        return self.message
+
