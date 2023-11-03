@@ -3,10 +3,12 @@ import sys
 import re
 import logging
 import time
-
 from datetime import datetime
 from pathlib import Path
-from multiprocessing import Process, Lock, Manager
+from multiprocessing import Process, Manager
+
+from requests.exceptions import RequestException
+import urllib.parse
 
 from tinyurl import TinyUrl
 from utility import *
@@ -16,17 +18,16 @@ from services.heartbeat import status_service
 import logconfig
 import settings
 
-test = ['EYp9ninnX7AVa3Wi7g4lP82JOLSZh27LQuJIWA5ODYV9HcyUG3FIosSIdJXw', 'G1ePGvH2SlLOpFIj8AgR6Ngvtw5HngBA9Py7h0N0BhxsIgUfndMOeG1NSBUr']
 
 logger = logging.getLogger('')
 SUCCESS = 25
 
 
 class TinyUrlManager:
-    def __init__(self, app_config:dict):  #  test del
-        self.selected_tinyurl:TinyUrl = None
-        self.auth_tokens:[] = None
-        self.fallback_urls:[] = None
+    def __init__(self, app_config: dict = None):
+        self.selected_id: int = None
+        self.auth_tokens: [] = None
+        self.fallback_urls: [] = None
         self.id_tinyurl_mapping = {}
         self.id_process_mapping = {}
         self.manager = Manager()
@@ -37,24 +38,22 @@ class TinyUrlManager:
             self.shared_data.update({
                 'ping_interval': app_config['ping_interval'],
                 'ping_sweep': False,
-                'for_deletion': False,
-
+                'delete_by_id': False,
             })
-            self.fallback_urls = app_config['fallback_urls']
+            self.fallback_urls = get_valid_urls(app_config['fallback_urls'])
             self.auth_tokens = app_config['auth_tokens']
         else:
             self.shared_data.update({
-                'ping_interval': app_config['ping_interval'],
+                'ping_interval': settings.PING_INTERVAL,
                 'ping_sweep': False,
-                'for_deletion': False,
+                'delete_by_id': False,
             })
-            self.fallback_urls = settings.TUNNELING_SERVICE_URLS
+            self.fallback_urls = get_valid_urls(settings.TUNNELING_SERVICE_URLS)
             self.auth_tokens = settings.AUTH_TOKENS
 
-        self.token_index = 0   #  won-t need for package verison
+        self.token_index = 0
 
     def run(self):
-        global test
         print(menu)
         while True:
             try:
@@ -62,11 +61,14 @@ class TinyUrlManager:
                 if self.handle_user_input(user_input):
                     break
             except InputException as e:
-                handle_invalid_input(e.message)
+                handle_invalid_input(e)
             except TinyUrlCreationError as e:
-                print(f'{red}{e.message}')
+                print(f'{red}{e}')
             except TinyUrlUpdateError as e:
                 print(f'{red}{e}')
+            except RequestException as e:
+                print(f'{red}Invalid resource!')
+                logger.debug(e)
             except KeyboardInterrupt:
                 for process in self.id_process_mapping.values():
                     process.terminate()
@@ -79,15 +81,21 @@ class TinyUrlManager:
         user_input = re.split(r"\s+", user_input)
         command = user_input[0]
 
-        if len(user_input) > 1 and command == 'new':
+        if command == 'new':
             try:
                 url = user_input[1]
-                new_id = self.get_next_available_id()
-                print(new_id)
-                tiny_url = TinyUrl(self.auth_tokens[self.token_index], self.fallback_urls, new_id)
-
             except (IndexError, ValueError, AttributeError):
                 raise InputException(' '.join(user_input))
+
+            url = f'https://{url}' if not urllib.parse.urlparse(url).scheme else url
+
+            try:
+                is_resource_available(url)
+            except RequestException as e:
+                raise e
+
+            new_id = self.get_next_available_id()
+            tiny_url = TinyUrl(self.auth_tokens[self.token_index], self.fallback_urls, new_id)
 
             try:
                 tiny_url.create_redirect_url(url)
@@ -97,12 +105,12 @@ class TinyUrlManager:
             print(f'{green}Tinyurl({tiny_url.id}) created!')
 
             self.id_tinyurl_mapping.update({tiny_url.id: tiny_url})
-            self.selected_tinyurl = tiny_url
+            self.selected_id = tiny_url.id
 
             with self.lock:
-                self.shared_data[tiny_url.id] = f'{tiny_url.redirect_url_long};{tiny_url.redirect_url_short}'
+                self.shared_data[tiny_url.id] = f'{tiny_url.final_url};{tiny_url.domain}'
 
-            new_process = Process(target=status_service, args=(self.selected_tinyurl, self.lock, self.shared_data,))
+            new_process = Process(target=status_service, args=(tiny_url, self.lock, self.shared_data,))
             new_process.daemon = True
             new_process.start()
             self.id_process_mapping[tiny_url.id] = new_process
@@ -116,7 +124,7 @@ class TinyUrlManager:
                     print(f'{yellow}Available tinyurls:\n')
                     self.print_short()
                 else:
-                    self.selected_tinyurl = self.id_tinyurl_mapping[num]
+                    self.selected_id = num
                     print(f'{green}Tinyurl({num}) selected!')
 
             except (IndexError, ValueError, AttributeError):
@@ -136,9 +144,9 @@ class TinyUrlManager:
                     logger.info(f'Tinyurl ({num}) deleted!')
                     self.id_tinyurl_mapping.pop(num)
 
-                    if self.selected_tinyurl.id == num:
+                    if self.selected_id == num:
                         print(f'{byellow}Tinyurl ({num}) unselected!')
-                        self.selected_tinyurl = None
+                        self.selected_id = None
                 else:
                     print(f"{red}Tinyurl({num}) is invalid!\n")
                     self.print_short()
@@ -151,26 +159,26 @@ class TinyUrlManager:
                 url = user_input[1]
             except (IndexError, ValueError, AttributeError):
                 raise InputException(' '.join(user_input))
-            if not self.selected_tinyurl:
+            if not self.selected_id:
                 print(f'{red}TinyUrl not selected!')
                 self.print_short()
                 return 0
             try:
-                self.id_tinyurl_mapping[self.selected_tinyurl.id].update_redirect(url)
-                updated_tinyurl = self.id_tinyurl_mapping[self.selected_tinyurl.id]
-                updated_redirect = f'{updated_tinyurl.redirect_url_long};{updated_tinyurl.redirect_url_short}'
+                updated_tinyurl = self.id_tinyurl_mapping[self.selected_id].update_redirect(url)
+                updated_redirect = f'{updated_tinyurl.final_url};{updated_tinyurl.domain}'
                 with self.lock:
                     self.shared_data[updated_tinyurl.id] = updated_redirect
-                print(f'{green}Tinyurl({self.selected_tinyurl.id}) updated!')
+                print(f'{green}Tinyurl({self.selected_id}) updated!')
             except TinyUrlUpdateError as e:
                 raise TinyUrlUpdateError(e.message, e.status_code)
 
         elif command == 'current':
             self.synchronize_data()
-            if self.selected_tinyurl.__str__() == 'None':
+            selected_tinyurl = self.id_tinyurl_mapping[self.selected_id]
+            if selected_tinyurl.__str__() == 'None':
                 print(f'{red}No tinyurl is selected!')
             else:
-                print(self.selected_tinyurl.__str__())
+                print(selected_tinyurl.__str__())
 
         elif command == 'info':
             self.synchronize_data()
@@ -187,12 +195,11 @@ class TinyUrlManager:
         elif command == 'tokens':
             for i, token in enumerate(self.auth_tokens):
                 print(f'{yellow}{i + 1}. - {token}')
-            print(f'Current token:\n{self.auth_tokens.index(self.token_index) + 1}. - {byellow}{self.token_index}')
+            print(f'{byellow}Current token:\n{self.token_index + 1}. - {self.auth_tokens[self.token_index]}')
 
         elif command == 'next':
-            token_index = (self.auth_tokens.index(self.token_index) + 1) % len(self.auth_tokens)
-            self.token_index = self.auth_tokens[token_index]
-            print(f'{bwhite}Token changed to:\n{yellow}{token_index + 1}. - {self.token_index}')
+            self.token_index = (self.token_index + 1) % len(self.auth_tokens)
+            print(f'{bwhite}Token changed to:\n{yellow}{self.token_index + 1}. - {self.auth_tokens[self.token_index]}')
 
         elif command == 'delay':
             try:
@@ -244,17 +251,17 @@ class TinyUrlManager:
 
     def print_short(self):
         for tinyurl in self.id_tinyurl_mapping.values():
-            if len(tinyurl.redirect_url_long) > 32:
-                print(f'{yellow}{tinyurl.id}. {tinyurl.tinyurl} -->  http://{tinyurl.redirect_url_short}/...')
+            if len(tinyurl.final_url) > 32:
+                print(f'{yellow}{tinyurl.id}. {tinyurl.tinyurl} -->  http://{tinyurl.domain}/...')
             else:
-                print(f'{yellow}{tinyurl.id}. {tinyurl.tinyurl} -->  {tinyurl.redirect_url_long} ')
+                print(f'{yellow}{tinyurl.id}. {tinyurl.tinyurl} -->  {tinyurl.final_url} ')
 
     def synchronize_data(self):
-        if self.shared_data['for_deletion']:
-            self.purge_inactive_tinyurl(self.shared_data['for_deletion'])
+        if self.shared_data['delete_by_id']:
+            self.purge_inactive_tinyurl(self.shared_data['delete_by_id'])
         for tinyurl in self.id_tinyurl_mapping.values():
-            tinyurl.redirect_url_long = self.shared_data[tinyurl.id].split(';')[0]
-            tinyurl.redirect_url_short = self.shared_data[tinyurl.id].split(';')[1]
+            tinyurl.final_url = self.shared_data[tinyurl.id].split(';')[0]
+            tinyurl.domain = self.shared_data[tinyurl.id].split(';')[1]
 
     def get_next_available_id(self):
         if self.id_tinyurl_mapping.keys():
@@ -272,12 +279,12 @@ class TinyUrlManager:
 
         self.id_tinyurl_mapping.pop(id_for_deletion)
 
-        if self.selected_tinyurl.id == id_for_deletion:
-            self.selected_tinyurl = None
+        if id_for_deletion == self.selected_id:
+            self.selected_id = None
 
         with self.lock:
             self.shared_data.pop(id_for_deletion)
-            self.shared_data['for_deletion'] = None
+            self.shared_data['delete_by_id'] = None
 
 
 def handle_invalid_input(input):   #  move
@@ -304,7 +311,7 @@ def initialize_loggers():   #   move
     color_formatter = logconfig.ColoredFormatter(log_format)
     debug_formatter = logconfig.DebugFormatter(log_format)
     logging.addLevelName(SUCCESS, 'SUCCESS')
-    logger.setLevel(logging.DEBUG)  #  debug//
+    logger.setLevel(logging.DEBUG)
 
     #  File Handler
     full_path, temp_file = create_log_file()
@@ -313,7 +320,7 @@ def initialize_loggers():   #   move
     file_handler.setFormatter(debug_formatter)
 
     #  Live feed handler
-    temp_handler = logconfig.LiveFeedHandler(formatter=color_formatter, path=temp_file)
+    temp_handler = logconfig.LiveFeedHandler(color_formatter, temp_file, settings.TERMINAL_EMULATOR)
     temp_handler.setLevel(logging.INFO)
     temp_handler.setFormatter(color_formatter)
 
@@ -323,7 +330,8 @@ def initialize_loggers():   #   move
 
 if __name__ == '__main__':
     initialize_loggers()
-    tinyurl_manager = TinyUrlManager({'ping_interval': 69, 'auth_tokens': test, 'fallback_urls': ['index.hr', 'ufc.com']})
+    tinyurl_manager = TinyUrlManager()
     tinyurl_manager.run()
+    #  {'ping_interval': 69, 'auth_tokens': test, 'fallback_urls': ['index.hr', 'ufc.com']})
     
 

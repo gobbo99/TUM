@@ -1,9 +1,10 @@
 import logging
 import time
+from urllib.parse import urlparse
 
 import requests
 
-from utility import url_tools
+from utility import url_tools, get_final_domain
 from exceptions.tinyurl_exceptions import TinyUrlPreviewException, NetworkException
 
 
@@ -26,7 +27,7 @@ def status_service(tinyurl, lock, shared_data):  #  work on exception handling
             is_updated = tinyurl.update_redirect_service()
             if is_updated:
                 with lock:
-                    shared_data[tinyurl.id] = f'{tinyurl.redirect_url_long};{tinyurl.redirect_url_short}'
+                    shared_data[tinyurl.id] = f'{tinyurl.final_url};{tinyurl.domain}'
             else:
                 logger.error(f'Tried updating with all alternate redirect URL but failed for tinyurl ({tinyurl.id})!')
                 notify_deletion(tinyurl, lock, shared_data)
@@ -37,7 +38,7 @@ def status_service(tinyurl, lock, shared_data):  #  work on exception handling
             is_updated = tinyurl.update_redirect_service()
             if is_updated:
                 with lock:
-                    shared_data[tinyurl.id] = f'{tinyurl.redirect_url_long};{tinyurl.redirect_url_short}'
+                    shared_data[tinyurl.id] = f'{tinyurl.final_url};{tinyurl.domain}'
             else:
                 notify_deletion(tinyurl, lock, shared_data)
                 return 0
@@ -46,22 +47,22 @@ def status_service(tinyurl, lock, shared_data):  #  work on exception handling
 def ping_check(tinyurl, shared_data):
     while True:
         try:
-            tinyurl.redirect_url_short = shared_data[tinyurl.id].split(';')[1]
-            tinyurl.redirect_url_long = shared_data[tinyurl.id].split(';')[0]
+            tinyurl.domain = shared_data[tinyurl.id].split(';')[1]
+            tinyurl.final_url = shared_data[tinyurl.id].split(';')[0]
             response = requests.head(tinyurl.tinyurl, allow_redirects=True)
             if 'tiny' in response.url:
-                raise TinyUrlPreviewException(tinyurl.id, tinyurl.redirect_url_short)
-            if url_tools.get_short_domain(response.url) in tinyurl.redirect_url_short:
-                logger.log(SUCCESS, f'Tinyurl({tinyurl.id}) - {tinyurl.tinyurl}  -->  {tinyurl.redirect_url_short}/')
+                raise TinyUrlPreviewException(tinyurl.id, tinyurl.final_url)
+            if get_final_domain(response.url) == tinyurl.domain:
+                logger.log(SUCCESS, f'Tinyurl({tinyurl.id}) - {tinyurl.tinyurl}  -->  {tinyurl.domain}/')
             else:
-                logger.error(f'Tinyurl ({tinyurl.id}) - {tinyurl.tinyurl}  -->  {response.url}. Expected {tinyurl.redirect_url_short}!')
+                logger.error(f'Tinyurl ({tinyurl.id}) - {tinyurl.tinyurl}  -->  {response.url}. Expected {tinyurl.domain}!')
             return 0
 
         except Exception:
-            raise NetworkException(tinyurl.redirect_url_long)
+            raise NetworkException(tinyurl.final_url)
 
 
 def notify_deletion(tinyurl, lock, shared_data):
     logger.warning(f'Tinyurl({tinyurl.id}) purged!')
     with lock:
-        shared_data['for_deletion'] = tinyurl.id
+        shared_data['delete_by_id'] = tinyurl.id

@@ -1,15 +1,14 @@
+import random
 import time
+import json
+import logging
+from urllib.parse import urlparse
 
 import requests
-from requests import RequestException
 
-import logging
-import json
-
-import settings
 from utility import *
 from consts import BASE_URL
-from exceptions.tinyurl_exceptions import handle_tinyurl_response, TinyUrlCreationError, TinyUrlUpdateError
+from exceptions.tinyurl_exceptions import TinyUrlCreationError, TinyUrlUpdateError
 from tunneling.tunnelservicehandler import TunnelServiceHandler
 
 logger = logging.getLogger('')
@@ -21,111 +20,109 @@ class TinyUrl:
     def __init__(self, auth_token, fallback_urls, new_id):
         self.tunneling_service = TunnelServiceHandler(fallback_urls)
         self.id = new_id
-        self.tinyurl = None
-        self.redirect_url_short = None
-        self.redirect_url_long = None
         self.auth_token = auth_token
+        self.tinyurl = None
+        self.domain = None
+        self.final_url = None
         self.existing_strings = set()
         self.rebuild_headers()
 
     def create_redirect_url(self, redirect_url: str):
         request_url = f"{BASE_URL}/create"
-        attempts = 3
         alias = generate_unique_string(self.existing_strings)
         self.existing_strings.add(alias)
 
-        data = {'url': redirect_url,
-                'alias': alias
-                }
+        payload = {'url': redirect_url,
+                   'alias': alias
+                  }
+        try:
+            response = requests.post(url=request_url, headers=self.headers, data=json.dumps(payload))
+            data = response.json()['data']
+        except:
+            return False
 
-        while attempts != 0:
-            response = requests.post(url=request_url, headers=self.headers, data=json.dumps(data))
-            result = handle_tinyurl_response(self, response)
-            if result == 0:
-                data = response.json()['data']
-                tiny_domain = data['domain']
-                self.redirect_url_long = data['url']
-                self.redirect_url_short = get_short_domain(self.redirect_url_long)
-                self.tinyurl = f"https://{tiny_domain}/{data['alias']}"
-                logger.log(SUCCESS, f'{green}Tinyurl ({self.id}) added!')
-                return 0
-            else:
-                attempts -= 1
-
-        raise TinyUrlCreationError(result)
+        if response.status_code / 100 == 2:
+            self.final_url = f'https://{data["url"]}' if not urlparse(data['url']).scheme else data['url']
+            self.domain = get_final_domain(self.final_url)
+            self.tinyurl = f"https://tinyurl.com/{alias}"
+            logger.log(SUCCESS, f'{green}Tinyurl ({self.id}) added!')
+            return True
+        else:
+            raise TinyUrlCreationError(response.json()['errors'], response.status_code)
 
     def update_redirect_service(self):
         request_url = f"{BASE_URL}/change"
-        initial_attempts = 3
-        while initial_attempts != 0:
-            data = {
-                'domain': 'tinyurl.com',
-                'alias': self.tinyurl.strip('/').split('/')[-1],
-                'url': self.redirect_url_long
-            }
-            response = requests.patch(url=request_url, headers=self.headers, data=json.dumps(data))
+        payload = {
+            'domain': 'tinyurl.com',
+            'alias': self.tinyurl.strip('/').split('/')[-1],
+            'url': self.final_url
+        }
+        attempts = 0
+        while attempts < 3:
             try:
-                check = requests.head(self.tinyurl, allow_redirects=True)   #  do this for regular redirect too and create?
-                check.raise_for_status()
-            except RequestException:
+                response = requests.patch(url=request_url, headers=self.headers, data=json.dumps(payload))
+            except Exception as e:
+                continue
+
+            if response.status_code / 100 == 2:
+                try:
+                    check = requests.head(url=self.tinyurl, allow_redirects=True)
+                except Exception as e:
+                    break
+                if get_final_domain(check.url) == self.domain:
+                    logger.log(SUCCESS, f"{bgreen}Tinyurl({self.id}) preview page successfully removed!")
+                    return True
+                else:
+                    time.sleep(random.uniform(1,5))
+                    attempts += 1
+
+        payload['url'] = self.tunneling_service.tunneler
+        attempts = 0
+
+        while attempts < self.tunneling_service.length:
+            try:
+                response = requests.patch(url=request_url, headers=self.headers, data=json.dumps(payload))
+            except Exception:
                 break
 
-            if handle_tinyurl_response(self, check) == 0:
-                if 'tiny' in check.url:
-                    time.sleep(1)
-                    initial_attempts -= 1
-                else:
-                    data = response.json()['data']
-                    logger.log(SUCCESS, f"{bgreen}Tinyurl ({self.id}) redirect updated! {self.redirect_url_short} -> {data['url']}")
-                    self.redirect_url_long = data['url']
-                    self.redirect_url_short = get_short_domain(self.redirect_url_long)
+            if response.status_code / 100 == 2:
+                data = response.json()['data']
+                check = requests.head(url=self.tinyurl, allow_redirects=True)
+                if get_final_domain(check.url) == get_final_domain(self.tunneling_service.tunneler):
+                    self.final_url = f'https://{data["url"]}' if not urlparse(data['url']).scheme else data['url']
+                    logger.log(SUCCESS,f"{bgreen}Tinyurl ({self.id}) redirect updated! {self.domain}/.. -> {self.final_url}")
+                    self.domain = get_final_domain(self.final_url)
                     return True
-            else:
-                time.sleep(1)
-                initial_attempts -= 1
-
-        attempts = 0
-        while attempts < self.tunneling_service.length:
-            print(f'attempts: {attempts}')
-            data = {
-                'domain': 'tinyurl.com',
-                'alias': self.tinyurl.strip('/').split('/')[-1],
-                'url': self.tunneling_service.tunneler
-            }
-            response = requests.patch(url=request_url, headers=self.headers, data=json.dumps(data))
-            if handle_tinyurl_response(self, response) == 0:
-                if 'tiny' in requests.head(self.tinyurl, allow_redirects=True).url:
-                    self.tunneling_service.cycle_next()
+                else:
+                    time.sleep(random.uniform(1,5))
                     attempts += 1
-                else:
-                    data = response.json()['data']
-                    logger.log(SUCCESS, f"{bgreen}Tinyurl ({self.id}) redirect updated! {self.redirect_url_short} -> {data['url']}")
-                    self.redirect_url_long = data['url']
-                    self.redirect_url_short = get_short_domain(self.redirect_url_long)
-                    return True
-            else:
-                self.tunneling_service.cycle_next()
-                attempts += 1
+                    continue
+
+            logger.warning(f'({self.id}) Failed to update to {self.tunneling_service.tunneler}...')
+            self.tunneling_service.cycle_next()
+            logger.warning(f'({self.id}) Cycling to {self.tunneling_service.tunneler}!')
 
         return False
 
     def update_redirect(self, url):
         request_url = f"{BASE_URL}/change"
-        data = {
+        payload = {
             'domain': 'tinyurl.com',
             'alias': self.tinyurl.strip('/').split('/')[-1],
             'url': url
         }
-        response = requests.patch(url=request_url, headers=self.headers, data=json.dumps(data))
-        status_code = handle_tinyurl_response(self, response)
-        if status_code == 0:
+        try:
+            response = requests.patch(url=request_url, headers=self.headers, data=json.dumps(payload))
+        except Exception:
+            pass
+        if response.status_code / 100 == 2:
             data = response.json()['data']
-            logger.log(SUCCESS, f"{bgreen}Tinyurl ({self.id}) redirect updated! {self.redirect_url_short} -> {data['url']}")
-            self.redirect_url_short = get_short_domain(data['url'])
-            self.redirect_url_long = data['url']
-            return 0
+            logger.log(SUCCESS, f"{bgreen}Tinyurl ({self.id}) redirect updated! {self.domain} -> {data['url']}!")
+            self.final_url = f'https://{data["url"]}' if not urlparse(data['url']).scheme else data['url']
+            self.final_url = data['url']
+            self.domain = get_final_domain(url)
         else:
-            raise TinyUrlUpdateError(response.text, response.status_code)
+            raise TinyUrlUpdateError(response.json()['errors'], response.status_code)
 
     def rebuild_headers(self):
         self.headers = {'Authorization': f'Bearer {self.auth_token}', 'Content-Type': 'application/json',
@@ -133,4 +130,4 @@ class TinyUrl:
 
     def __str__(self):
         return f'\n{yellow}ID: {self.id}\n________\n\nToken: {self.auth_token}\nURL: {self.tinyurl}\nRedirect URL: '\
-               f'{self.redirect_url_long}{reset}'
+               f'{self.final_url}{reset}'

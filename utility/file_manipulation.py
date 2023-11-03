@@ -6,11 +6,15 @@ def read_data_from_file(file_path, separator):
     :param separator: The separator used to split the data.
     :return: A list of data elements.
     """
-    data = []
     try:
         with open(file_path, 'r') as file:
             data = file.read()
             elements = data.split(separator)
+        filtered_elements = [el for el in elements if el != '']
+        return filtered_elements
+
     except FileNotFoundError:
         print(f"File not found: {file_path}")
-    return elements
+
+    except Exception as e:
+        raise e

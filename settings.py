@@ -13,10 +13,10 @@ try:
     LOGS_PATH = config_file.get('Path', 'logs_path').strip()
     TOKENS_PATH = config_file.get('Path', 'auth_tokens_path').strip()
     FALLBACK_URLS_PATH = config_file.get('Path', 'fallback_urls_path').strip()
-
     TOKENS_SEPERATOR = config_file['Path']['auth_tokens_seperator'].strip().replace('__NEWLINE__', '\n')
     FALLBACK_URLS_SEPERATOR = config_file['Path']['fallback_urls_seperator'].strip().replace('__NEWLINE__', '\n')
-    PING_INTERVAL = config_file['Options'].get('ping_interval').strip() or 60
+    PING_INTERVAL = config_file['Options'].getint('ping_interval') or 60
+    TERMINAL_EMULATOR = (config_file['Options'].get('terminal_emulator') or 'gnome')
 
     AUTH_TOKENS = read_data_from_file(TOKENS_PATH, TOKENS_SEPERATOR)
     TUNNELING_SERVICE_URLS = read_data_from_file(FALLBACK_URLS_PATH, FALLBACK_URLS_SEPERATOR)
