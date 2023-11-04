@@ -12,6 +12,10 @@ logger = logging.getLogger('')
 SUCCESS = 25
 
 
+def heartbeat_service(api_client, urls):
+    pass
+
+
 def status_service(tinyurl, lock, shared_data):  #  work on exception handling
     while True:
         try:

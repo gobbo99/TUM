@@ -18,7 +18,7 @@ try:
     PING_INTERVAL = config_file['Options'].getint('ping_interval') or 60
     TERMINAL_EMULATOR = (config_file['Options'].get('terminal_emulator') or 'gnome')
 
-    AUTH_TOKENS = read_data_from_file(TOKENS_PATH, TOKENS_SEPERATOR)
+    AUTH_TOKENS = read_data_from_file(TOKENS_PATH, TOKENS_SEPERATOR).copy()
     TUNNELING_SERVICE_URLS = read_data_from_file(FALLBACK_URLS_PATH, FALLBACK_URLS_SEPERATOR)
 
     if not LOGS_PATH or LOGS_PATH == '~':

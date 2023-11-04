@@ -8,7 +8,7 @@ import requests
 from requests.exceptions import *
 
 from utility import *
-from api.api import Api
+from api.apiclient import ApiClient
 from exceptions.tinyurl_exceptions import TinyUrlCreationError, TinyUrlUpdateError, NetworkError
 
 logger = logging.getLogger('')
@@ -17,7 +17,7 @@ SUCCESS = 25
 
 class TinyUrl:
 
-    def __init__(self, token_id, new_id, fallback_urls=None):
+    def __init__(self, token_id, new_id):
         self.tinyurl = None
         self.domain = None
         self.final_url = None
@@ -26,7 +26,7 @@ class TinyUrl:
 
     def instantiate_tinyurl(self, url, api_client):
         try:
-            self.tinyurl, self.final_url, self.domain = self.api.create_tinyurl(url)
+            self.tinyurl, self.final_url, self.domain = api_client.create_tinyurl(url, self.token_id)
             logger.log(SUCCESS, f'{green}Tinyurl({self.id}) created! {self.tinyurl} --> {self.final_url}!')
         except (TinyUrlCreationError, RequestException, NetworkError) as e:
             raise e

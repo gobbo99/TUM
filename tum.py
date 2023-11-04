@@ -11,7 +11,7 @@ from requests.exceptions import RequestException
 import urllib.parse
 
 from tinyurl import TinyUrl
-from api.api import Api
+from api.apiclient import ApiClient
 from utility import *
 from consts import menu, cursor_up, erase_line
 from exceptions.tinyurl_exceptions import TinyUrlCreationError, TinyUrlUpdateError, InputException, NetworkError
@@ -25,6 +25,7 @@ SUCCESS = 25
 
 class TinyUrlManager:
     def __init__(self, app_config: dict = None):
+        self.ball = Spinner()
         self.selected_id: int = None
         self.auth_tokens: [] = None
         self.id_tinyurl_mapping = {}
@@ -50,10 +51,13 @@ class TinyUrlManager:
             self.fallback_urls = get_valid_urls(settings.TUNNELING_SERVICE_URLS)
             self.auth_tokens = settings.AUTH_TOKENS
 
-        self.api_client = Api(self.auth_tokens, fallback_urls=self.fallback_urls)
+        self.api_client = ApiClient(self.auth_tokens, fallback_urls=self.fallback_urls)
         self.token_id = 1
 
     def run(self):
+        with Spinner():
+            for _ in range(10):
+                time.sleep(1)
         print(menu)
         while True:
             try:
@@ -93,13 +97,10 @@ class TinyUrlManager:
             if not new_tinyurl:
                 return 0
 
-
             print(f'{green}Tinyurl({new_tinyurl.id}) created!')
 
             self.id_tinyurl_mapping.update({new_tinyurl.id: new_tinyurl})
             self.selected_id = new_tinyurl.id
-
-            print(new_tinyurl)
 
             with self.lock:
                 self.shared_data[new_tinyurl.id] = f'{new_tinyurl.final_url};{new_tinyurl.domain}'
@@ -220,7 +221,6 @@ class TinyUrlManager:
 
         elif command == 'ping':
             logger.info('Ping sweeping all urls...')
-            print(f'{bgreen}\nPing sweeping in progress...')
             with self.lock:
                 self.shared_data['ping_sweep'] = True
                 time.sleep(5)
@@ -247,11 +247,12 @@ class TinyUrlManager:
         else:
             handle_invalid_input(' '.join(user_input))
 
+    @Spinner(delay=0.1)
     def create_tinyurl(self, url):
         new_id = self.get_next_available_id()
         try:
             new_tinyurl = TinyUrl(self.token_id, new_id)
-            new_tinyurl.instantiate_tinyurl(url)
+            new_tinyurl.instantiate_tinyurl(url, self.api_client)
             self.id_tinyurl_mapping[new_tinyurl.id] = new_tinyurl
             return new_tinyurl
         except (TinyUrlCreationError, RequestException, NetworkError) as e:
