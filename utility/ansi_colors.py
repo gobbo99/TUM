@@ -29,6 +29,18 @@ bmagenta = "\u001b[45;1m"
 nc = "\033[00m"
 reset = "\u001b[0m"
 
+ansi_fg_colors = {
+    'black': '\033[30m',
+    'red': '\033[31m',
+    'green': '\033[32m',
+    'yellow': '\033[33m',
+    'blue': '\033[34m',
+    'magenta': '\033[35m',
+    'cyan': '\033[36m',
+    'white': '\033[37m',
+    'reset': '\033[0m'  # Reset color to default
+}
+
 success = f"{yellow}[{bgreen}√{yellow}]"
 error = f"{yellow}[{bred}X{yellow}]"
 info = f"{yellow}[{bred}\u2022{yellow}]"

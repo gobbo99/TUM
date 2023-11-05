@@ -1,7 +1,7 @@
 import logging
 import json
 import time
-from typing import List, Dict, Tuple
+from typing import Optional, Callable, List, Dict, Tuple
 from urllib.parse import urlparse
 
 import requests
@@ -20,38 +20,38 @@ logger = logging.getLogger('')
 
 class ApiClient:
     def __init__(self, auth_tokens: [], fallback_urls=None):
-        self.id_token_mapping = {}
-        for i in range(1, len(auth_tokens) + 1):
-            self.id_token_mapping[i] = auth_tokens[i - 1]
-        self.token_id = 1
-        self.tunneling_service = TunnelServiceHandler(fallback_urls)
+        self.auth_tokens: List[str] = auth_tokens
+        self.token_index_selected: int = 0
+        self.id_tinyurl_id_token_mapping: Dict[int, str] = {}
+        self.tunneling_service: TunnelServiceHandler = TunnelServiceHandler(fallback_urls)
 
-    def create_tinyurl(self, target_url, token_id):
-        headers = self.rebuild_headers(token_id)
+    def create_tinyurl(self, target_url: str, tinyurl_id: int, expires_at: str = None):
+        token_index = self.token_index_selected   # So it can be async and not update during func execution
+        headers = self.build_headers(token=self.auth_tokens[token_index])
         request_url = f'{BASE_URL}/create'
         self.check_target_url(target_url)
+
         length = 5
         while True:
             try:
-                payload = {'url': target_url,
+                payload = {
+                           'url': target_url,
                            'alias': generate_string_5_30(length=length),
-                           'expires_at': None
+                           'expires_at': expires_at
                            }
-                response = requests.post(url=request_url, headers=headers, data=json.dumps(payload), timeout=5)
+                response = requests.post(url=request_url, headers=headers, data=json.dumps(payload), timeout=3)
                 response.raise_for_status()
                 data = response.json()['data']
-                final_url = f'https://{data["url"]}' if not urlparse(data['url']).scheme else data['url']
-                domain = get_final_domain(final_url)
-                tinyurl = f"https://tinyurl.com/{data['alias']}"
-                return tinyurl, final_url, domain
+                self.id_tinyurl_id_token_mapping[tinyurl_id] = self.auth_tokens[self.token_index_selected]
+                return data
             except HTTPError as e:
                 if response.json()['errors']:
                     if response.json()['errors'][0] == 'Alias is not available.':
                         length += 1
                         continue
-                    raise TinyUrlCreationError(response.json(['errors']), response.status_code)
+                    raise TinyUrlCreationError(response.json()['errors'], response.status_code)
                 else:
-                    raise TinyUrlCreationError([e], response.status_code)
+                    raise TinyUrlCreationError([str(e)], response.status_code)
             except Timeout:
                 raise NetworkError('Connection error. Request timed out!')
             except RequestException:
@@ -59,8 +59,25 @@ class ApiClient:
             except ValueError:
                 raise NetworkError("Can't find ['data'] in response! Check Tinyurl docs")
 
-    def update_tinyurl_redirect(self, alias, target_url, token_id):
-        headers = self.rebuild_headers(self.id_token_mapping[token_id])
+    """
+    Updates the redirect target of a TinyURL alias.
+
+    Args:
+        alias (str): The TinyURL alias to update.
+        target_url (str): The new target URL for the alias.
+        token_id (int): The token ID used for authorization.
+
+    Returns:
+        str: The updated TinyURL alias.
+
+    Raises:
+        TinyUrlCreationError: If there's an issue creating the TinyURL.
+        NetworkError: If there's a network error during the update.
+        RequestError: If the request to update the TinyURL fails.
+    """
+    def update_tinyurl_redirect(self, alias: str, target_url: str, tinyurl_id: int, headers: dict = None):
+        self.check_target_url(target_url)
+        headers = self.build_headers(token=self.id_tinyurl_id_token_mapping[tinyurl_id])
         request_url = f'{BASE_URL}/change'
         payload = {
             'domain': 'tinyurl.com',
@@ -72,10 +89,10 @@ class ApiClient:
         delay = 1
         while attempts < 3:
             try:
-                response = requests.patch(url=request_url, headers=headers, data=payload, timeout=5)
+                response = requests.patch(url=request_url, headers=headers, data=json.dumps(payload), timeout=3)
                 response.raise_for_status()
                 data = response.json()['data']
-                return data['url']
+                return data
             except HTTPError as e:
                 if response.json() and 'errors' in response.json():
                     raise TinyUrlCreationError(response.json()['errors'], response.status_code)
@@ -93,16 +110,12 @@ class ApiClient:
                 raise NetworkError("Can't find ['data'] in response! Check Tinyurl docs")
 
     def switch_auth_token(self, token_id):
-        self.token_id = token_id
-
-    def rebuild_headers(self, token_id):  # can be async now
-        return {'Authorization': f'Bearer {self.id_token_mapping[token_id]}', 'Content-Type': 'application/json',
-                'User-Agent': 'Google Chrome'}
+        self.token_index_selected = token_id
 
     @staticmethod
     def check_target_url(url):
         try:
-            response = requests.head(url)
+            response = requests.head(url, timeout=3)
             if urlparse(response.url).netloc == urlparse(url).netloc:
                 return
             response.raise_for_status()
@@ -112,4 +125,34 @@ class ApiClient:
         except Timeout:
             raise NetworkError('Connection error. Request timed out!')
         except RequestException:
-            raise RequestError(f"Invalid or inaccessible resource {url}")
+            raise RequestError(url)
+
+    def build_headers(self, token_index: Optional[int] = None, token: Optional[str] = None, headers: Optional[dict] = None) -> dict:  # can be async now
+        auth_token = token or self.id_tinyurl_id_token_mapping.get(token_index)
+        auth_headers = {'Authorization': f'Bearer {auth_token}',
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'Google Chrome'
+                        }
+        if not headers:
+            headers = {}
+
+        joint_headers = {**auth_headers, **headers}
+        return joint_headers
+
+    def _make_request(self,
+                      token_id: int, request_call: Callable, request_url: str,
+                      headers: Optional[dict] = None, data: Optional[dict] = None,
+                      params: Optional[dict] = None
+                      ):
+        if not headers:
+            headers = {}
+        self.headers = self.build_headers(token_id)
+        joint_headers = {**self.headers, **headers}
+        if request_call == requests.post:
+            request_url = BASE_URL + '/create'
+        elif request_call == requests.patch:
+            request_url = BASE_URL + '/change'
+        else:
+            pass
+        pass
+

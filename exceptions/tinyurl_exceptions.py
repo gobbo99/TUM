@@ -1,4 +1,5 @@
 import logging
+from utility.ansi_colors import *
 
 
 class TinyUrlPreviewException(Exception):
@@ -18,7 +19,7 @@ class TinyUrlCreationError(Exception):
 
     def __str__(self):
         message = '\n'.join(self.errors)
-        return f'Error HTTP code: [{self.status_code}]\n{message}'
+        return f'{red}Error HTTP code: [{self.status_code}]\n{message}'
 
 
 class TinyUrlUpdateError(Exception):
@@ -28,7 +29,7 @@ class TinyUrlUpdateError(Exception):
 
     def __str__(self):
         message = '\n'.join(self.errors)
-        return f'Error HTTP code: [{self.status_code}]\n{message}'
+        return f'{red}Error HTTP code: [{self.status_code}]\n{message}'
 
 
 class InputException(Exception):
@@ -41,7 +42,7 @@ class InputException(Exception):
 
 class RequestError(Exception):
     def __init__(self, url):
-        self.message = f'Redirect url {url} seems to be invalid!'
+        self.message = f'{red}Redirect url {url} seems to be invalid!'
         super().__init__(self.message)
 
     def __str__(self):
@@ -50,7 +51,7 @@ class RequestError(Exception):
 
 class NetworkError(Exception):
     def __init__(self, message):
-        self.message = message
+        self.message = f'{red}{message}'
         super().__init__(self.message)
 
     def __str__(self):

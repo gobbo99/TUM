@@ -3,6 +3,7 @@ from datetime import datetime
 
 from utility.ansi_colors import success, error, warning, info
 
+
 class ColoredFormatter(logging.Formatter):
 
     # Define color codes

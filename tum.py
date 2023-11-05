@@ -1,20 +1,22 @@
 import os
+import random
+import subprocess
 import sys
 import re
 import logging
 import time
-from datetime import datetime
+from typing import Dict, List, Any, Callable, Optional
+import datetime
 from pathlib import Path
 from multiprocessing import Process, Manager
-
-from requests.exceptions import RequestException
 import urllib.parse
 
 from tinyurl import TinyUrl
 from api.apiclient import ApiClient
 from utility import *
 from consts import menu, cursor_up, erase_line
-from exceptions.tinyurl_exceptions import TinyUrlCreationError, TinyUrlUpdateError, InputException, NetworkError
+from exceptions.tinyurl_exceptions import TinyUrlCreationError, TinyUrlUpdateError, InputException, NetworkError, \
+    RequestError
 from services.heartbeat import status_service
 import logconfig
 import settings
@@ -25,9 +27,8 @@ SUCCESS = 25
 
 class TinyUrlManager:
     def __init__(self, app_config: dict = None):
-        self.ball = Spinner()
         self.selected_id: int = None
-        self.auth_tokens: [] = None
+        self.auth_tokens: [] = None  # identical to authclients
         self.id_tinyurl_mapping = {}
         self.id_process_mapping = {}
         self.manager = Manager()
@@ -55,24 +56,24 @@ class TinyUrlManager:
         self.token_id = 1
 
     def run(self):
-        with Spinner():
-            for _ in range(10):
-                time.sleep(1)
+        slow_print(f'{byellow}TUM[{settings.VERSION}] {cyan}\u2665{reset}', 0.04)
+        slow_print('__________', 0.04)
         print(menu)
         while True:
             try:
-                user_input = input(f'\n{byellow}> ').strip()
+                user_input = input(f'\n{white}> ').strip()
                 if self.handle_user_input(user_input):
                     break
             except InputException as e:
                 handle_invalid_input(e)
             except TinyUrlCreationError as e:
-                print(f'{red}{e}')
+                print(e)
             except TinyUrlUpdateError as e:
-                print(f'{red}{e}')
-            except RequestException as e:
-                print(f'{red}Invalid resource!')
-                logger.debug(e)
+                print(e)
+            except NetworkError as e:
+                print(e)
+            except RequestError as e:
+                print(e)
             except KeyboardInterrupt:
                 for process in self.id_process_mapping.values():
                     process.terminate()
@@ -93,9 +94,10 @@ class TinyUrlManager:
 
             url = f'https://{url}' if not urllib.parse.urlparse(url).scheme else url
 
-            new_tinyurl = self.create_tinyurl(url)
-            if not new_tinyurl:
-                return 0
+            try:
+                new_tinyurl = self.create_tinyurl(url)
+            except (TinyUrlCreationError, RequestError, NetworkError) as e:
+                raise e
 
             print(f'{green}Tinyurl({new_tinyurl.id}) created!')
 
@@ -158,15 +160,14 @@ class TinyUrlManager:
                 print(f'{red}TinyUrl not selected!')
                 self.print_short()
                 return 0
+
+            url = f'https://{url}' if not urllib.parse.urlparse(url).scheme else url
+
             try:
-                updated_tinyurl = self.id_tinyurl_mapping[self.selected_id]
-                updated_tinyurl.update_redirect(url)
-                updated_redirect = f'{updated_tinyurl.final_url};{updated_tinyurl.domain}'
-                with self.lock:
-                    self.shared_data[updated_tinyurl.id] = updated_redirect
+                self.update_tinyurl(url)
                 print(f'{green}Tinyurl({self.selected_id}) updated!')
-            except TinyUrlUpdateError as e:
-                raise TinyUrlUpdateError(e.message, e.status_code)
+            except (RequestError, NetworkError, TinyUrlUpdateError) as e:
+                raise e
 
         elif command == 'current':
             self.synchronize_data()
@@ -182,8 +183,9 @@ class TinyUrlManager:
             print(f'{green}_______________________')
             print(f"Pinging interval is {self.shared_data['ping_interval']}s")
 
-            self.print_short()
+        elif command == 'list' or command == 'l':
             self.synchronize_data()
+            self.print_short()
             print(f'{green}_______________________')
             print(f"Pinging interval is {self.shared_data['ping_interval']}s")
 
@@ -193,15 +195,16 @@ class TinyUrlManager:
         elif command == 'token':
             try:
                 num = re.search(r'\d+', user_input[1])
-                num = int(num.group())
-                if num not in self.api_client.id_token_mapping.keys():
-                    print(f'{red}Token ({num}) is invalid!')
+                token_id = int(num.group())
+                if not self.auth_tokens[token_id - 1]:
+                    print(f'{red}Token ({token_id}) is invalid!')
                     print(f'{byellow}Available tokens:')
                     self.print_tokens()
                 else:
-                    self.api_client.token_id = num
-                    print(f'{bwhite}Token changed to:\n{yellow}{self.api_client.id_token_mapping[self.api_client.token_id]}')
-            except (IndexError, ValueError, AttributeError):
+                    self.token_id = token_id
+                    self.api_client.token_index_selected = token_id - 1
+                    print(f'{bwhite}Token changed to:\n{yellow}{self.auth_tokens[token_id - 1]}')
+            except (IndexError, ValueError, AttributeError) as e:
                 raise InputException(' '.join(user_input))
 
         elif command == 'delay':
@@ -237,27 +240,44 @@ class TinyUrlManager:
             for process in self.id_process_mapping.values():
                 process.terminate()
                 process.join()
-            slow_print(f'{bwhite}Thank you for using TUM!{bred}\u2665', 0.05)
-            time.sleep(0.05)
-            print(f'{byellow}[TUM version 1.0]')
+
+            exit_text = f"Thank you for using TUM!\n[TUM version 1.1]".encode('utf-8')
+            animations = ['waves', 'decrypt', 'blackhole', 'burn']
+            command = f'tte {random.choice(animations)}'
+            subprocess.run(command, input=exit_text, shell=True)
             return -1
 
         elif command == 'clear' or command == 'cls':
             os.system('clear')  # Unix
+
         else:
             handle_invalid_input(' '.join(user_input))
 
-    @Spinner(delay=0.1)
-    def create_tinyurl(self, url):
+    @Spinner(text='Sending request to create...', spinner_type='bouncing_ball', color='cyan', delay=0.05)
+    def create_tinyurl(self, url: str):
         new_id = self.get_next_available_id()
         try:
-            new_tinyurl = TinyUrl(self.token_id, new_id)
+            new_tinyurl = TinyUrl(new_id)
             new_tinyurl.instantiate_tinyurl(url, self.api_client)
             self.id_tinyurl_mapping[new_tinyurl.id] = new_tinyurl
             return new_tinyurl
-        except (TinyUrlCreationError, RequestException, NetworkError) as e:
-            print(f'{red}{e}')
-            return None
+        except (TinyUrlCreationError, RequestError, NetworkError) as e:
+            raise e
+
+    @Spinner(text='Sending request to update...', spinner_type='bouncing_ball', color='cyan', delay=0.05)
+    def update_tinyurl(self, url: str):
+        try:
+            updated_tinyurl: TinyUrl = self.id_tinyurl_mapping[self.selected_id]
+            updated_tinyurl.update_redirect(url, self.api_client)
+            url_info = f'{updated_tinyurl.final_url};{updated_tinyurl.domain}'
+            with self.lock:
+                self.shared_data[updated_tinyurl.id] = url_info
+
+        except (TinyUrlUpdateError, RequestError, NetworkError) as e:
+            raise e
+
+    def delete_tinyurl(self, id):
+        pass
 
     def print_all(self):
         for tinyurl in self.id_tinyurl_mapping.values():
@@ -271,9 +291,9 @@ class TinyUrlManager:
                 print(f'{yellow}{tinyurl.id}. {tinyurl.tinyurl} -->  {tinyurl.final_url} ')
 
     def print_tokens(self):
-        for index, token in self.api_client.id_token_mapping.items():
-            print(f'{white}{index}. - {token}')
-        print(f'\n{bwhite}Current token:\n{green}{self.api_client.id_token_mapping[self.api_client.token_id]}')
+        for index, token in enumerate(self.auth_tokens):
+            print(f'{white}{index + 1}. - {token}')
+        print(f'\n{bwhite}Current token:\n{green}{self.api_client.auth_tokens[self.token_id - 1]}')
 
     def synchronize_data(self):
         if self.shared_data['delete_by_id']:
@@ -308,19 +328,16 @@ class TinyUrlManager:
 
 def handle_invalid_input(input):  # move
     print(f'{red}\nInvalid input: {reset}{input}')
-    print(menu)
+    print(f"{white}Type 'help' to display options!")
 
 
 def create_log_file():
-    created_at = datetime.now().strftime('%c') + '.txt'
+    created_at = datetime.datetime.now().strftime('%c') + '.txt'
     logs_path = Path(settings.LOGS_PATH)
     log_dir = logs_path / '.tum_logs'
     log_dir.mkdir(parents=True, exist_ok=True)
     final_path = log_dir / created_at
     final_path.touch()
-    print(f"{white}Logs are saved in {log_dir}\n\n")
-    slow_print(f'{byellow}TUM[{settings.VERSION}] {bred}\u2665{reset}', 0.04)
-    slow_print('__________', 0.04)
     return final_path, log_dir / 'temp'
 
 
@@ -347,8 +364,12 @@ def initialize_loggers():  # move
     logger.addHandler(temp_handler)
 
 
-if __name__ == '__main__':
+@Spinner(text='Loading configuration...', spinner_type='pulse_spinner', color='cyan', delay=0.1)
+def initialize() -> TinyUrlManager:
     initialize_loggers()
-    tinyurl_manager = TinyUrlManager()
-    tinyurl_manager.run()
-    #  {'ping_interval': 69, 'auth_tokens': test, 'fallback_urls': ['index.hr', 'ufc.com']})
+    return TinyUrlManager()
+
+
+if __name__ == '__main__':
+    tum: TinyUrlManager = initialize()
+    tum.run()
