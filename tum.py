@@ -5,10 +5,11 @@ import sys
 import re
 import logging
 import time
-from typing import Dict, List, Any, Callable, Optional
+from typing import Dict, List, Any, Tuple, Optional
 import datetime
 from pathlib import Path
-from multiprocessing import Process, Manager
+import threading
+from queue import LifoQueue
 import urllib.parse
 
 from tinyurl import TinyUrl
@@ -18,6 +19,7 @@ from consts import menu, cursor_up, erase_line
 from exceptions.tinyurl_exceptions import TinyUrlCreationError, TinyUrlUpdateError, InputException, NetworkError, \
     RequestError
 from services.heartbeat import status_service
+from services.heartbeat_2 import HeartbeatService
 import logconfig
 import settings
 
@@ -26,29 +28,25 @@ SUCCESS = 25
 
 
 class TinyUrlManager:
-    def __init__(self, app_config: dict = None):
+    def __init__(self, shared_queue: LifoQueue, app_config: dict = None):
         self.selected_id: int = None
         self.auth_tokens: [] = None  # identical to authclients
         self.id_tinyurl_mapping = {}
-        self.id_process_mapping = {}
-        self.manager = Manager()
-        self.lock = self.manager.Lock()
-        self.shared_data = self.manager.dict()
-
+        self.shared_queue = shared_queue
         if app_config:
-            self.shared_data.update({
-                'ping_interval': app_config['ping_interval'],
+            data = {
+                'delay': settings.PING_INTERVAL,
                 'ping_sweep': False,
-                'delete_by_id': False,
-            })
+            }
+            self.shared_queue.put(data)
             self.fallback_urls = get_valid_urls(app_config['fallback_urls'])
             self.auth_tokens = app_config['auth_tokens']
         else:
-            self.shared_data.update({
-                'ping_interval': settings.PING_INTERVAL,
+            data = {
+                'delay': settings.PING_INTERVAL,
                 'ping_sweep': False,
-                'delete_by_id': False,
-            })
+            }
+            self.shared_queue.put(data)
             self.fallback_urls = get_valid_urls(settings.TUNNELING_SERVICE_URLS)
             self.auth_tokens = settings.AUTH_TOKENS
 
@@ -103,7 +101,7 @@ class TinyUrlManager:
 
             self.id_tinyurl_mapping.update({new_tinyurl.id: new_tinyurl})
             self.selected_id = new_tinyurl.id
-
+            """
             with self.lock:
                 self.shared_data[new_tinyurl.id] = f'{new_tinyurl.final_url};{new_tinyurl.domain}'
 
@@ -111,6 +109,7 @@ class TinyUrlManager:
             new_process.daemon = True
             new_process.start()
             self.id_process_mapping[new_tinyurl.id] = new_process
+            """
 
         elif command == 'select':
             try:
@@ -212,8 +211,10 @@ class TinyUrlManager:
                 match = re.search(r'(\d+)(.*$)?', user_input[1])
                 num, unit = match.groups()
                 num = int(num)
-                if unit == 'm':
+                if unit in ['m', 'min', 'minutes'] :
                     num = num * 60
+                if unit in ['h', 'hrs', 'hours']:
+                    num = num * 3600
                 with self.lock:
                     self.shared_data['ping_interval'] = num
                 print(f'{green}Pinging interval changed to {num} seconds!')
@@ -224,12 +225,12 @@ class TinyUrlManager:
 
         elif command == 'ping':
             logger.info('Ping sweeping all urls...')
-            with self.lock:
-                self.shared_data['ping_sweep'] = True
-                time.sleep(5)
-                self.shared_data['ping_sweep'] = False
-            cursor_up = '\x1b[1A'
-            erase_line = '\x1b[2K'
+            with Spinner(text='Ping sweeping all urls...\n', spinner_type='bouncing_ball', color='cyan', delay=0.05):
+                with self.lock:
+                    self.q
+                    self.shared_data['ping_sweep'] = True
+                    time.sleep(5)
+                    self.shared_data['ping_sweep'] = False
             print(cursor_up + erase_line)
             print('\033[2A')
 
@@ -237,15 +238,10 @@ class TinyUrlManager:
             print(menu)
 
         elif command == 'exit':
-            for process in self.id_process_mapping.values():
-                process.terminate()
-                process.join()
-
             exit_text = f"Thank you for using TUM!\n[TUM version 1.1]".encode('utf-8')
             animations = ['waves', 'decrypt', 'blackhole', 'burn']
             command = f'tte {random.choice(animations)}'
             subprocess.run(command, input=exit_text, shell=True)
-            return -1
 
         elif command == 'clear' or command == 'cls':
             os.system('clear')  # Unix
@@ -367,9 +363,16 @@ def initialize_loggers():  # move
 @Spinner(text='Loading configuration...', spinner_type='pulse_spinner', color='cyan', delay=0.1)
 def initialize() -> TinyUrlManager:
     initialize_loggers()
-    return TinyUrlManager()
+    shared_queue = LifoQueue()
+    tum = TinyUrlManager(shared_queue = shared_queue)
+    heartbeat = HeartbeatService(tum.api_client, shared_queue)
+    t1 = threading.Thread(target=tum.run)
+    t2 = threading.Thread(target=heartbeat.start_heartbeat_service)
+    return t1, t2
 
 
 if __name__ == '__main__':
-    tum: TinyUrlManager = initialize()
-    tum.run()
+    tum_thread, heartbeat_thread = initialize()
+    tum_thread.start()
+    heartbeat_thread.start()
+    tum_thread.join()

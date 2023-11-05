@@ -115,10 +115,10 @@ class ApiClient:
     @staticmethod
     def check_target_url(url):
         try:
-            response = requests.head(url, timeout=3)
+            response = requests.head(url, timeout=5)
+            response.raise_for_status()
             if urlparse(response.url).netloc == urlparse(url).netloc:
                 return
-            response.raise_for_status()
             return
         except HTTPError as e:
             raise RequestError(f"Error for {url}: {e}")
