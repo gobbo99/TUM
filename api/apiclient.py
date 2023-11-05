@@ -22,10 +22,10 @@ class ApiClient:
     def __init__(self, auth_tokens: [], fallback_urls=None):
         self.auth_tokens: List[str] = auth_tokens
         self.token_index_selected: int = 0
-        self.id_tinyurl_id_token_mapping: Dict[int, str] = {}
+        self.alias_token_mapping: Dict[int, str] = {}
         self.tunneling_service: TunnelServiceHandler = TunnelServiceHandler(fallback_urls)
 
-    def create_tinyurl(self, target_url: str, tinyurl_id: int, expires_at: str = None):
+    def create_tinyurl(self, target_url: str, expires_at: str = None):
         token_index = self.token_index_selected   # So it can be async and not update during func execution
         headers = self.build_headers(token=self.auth_tokens[token_index])
         request_url = f'{BASE_URL}/create'
@@ -42,7 +42,7 @@ class ApiClient:
                 response = requests.post(url=request_url, headers=headers, data=json.dumps(payload), timeout=3)
                 response.raise_for_status()
                 data = response.json()['data']
-                self.id_tinyurl_id_token_mapping[tinyurl_id] = self.auth_tokens[self.token_index_selected]
+                self.alias_token_mapping[data['alias']] = self.auth_tokens[self.token_index_selected]
                 return data
             except HTTPError as e:
                 if response.json()['errors']:
@@ -75,9 +75,9 @@ class ApiClient:
         NetworkError: If there's a network error during the update.
         RequestError: If the request to update the TinyURL fails.
     """
-    def update_tinyurl_redirect(self, alias: str, target_url: str, tinyurl_id: int, headers: dict = None):
+    def update_tinyurl_redirect(self, alias: str, target_url: str, headers: dict = None):
         self.check_target_url(target_url)
-        headers = self.build_headers(token=self.id_tinyurl_id_token_mapping[tinyurl_id])
+        headers = self.build_headers(token=self.alias_token_mapping[alias], headers=headers)
         request_url = f'{BASE_URL}/change'
         payload = {
             'domain': 'tinyurl.com',
@@ -128,7 +128,7 @@ class ApiClient:
             raise RequestError(url)
 
     def build_headers(self, token_index: Optional[int] = None, token: Optional[str] = None, headers: Optional[dict] = None) -> dict:  # can be async now
-        auth_token = token or self.id_tinyurl_id_token_mapping.get(token_index)
+        auth_token = token or self.alias_token_mapping.get(token_index)
         auth_headers = {'Authorization': f'Bearer {auth_token}',
                         'Content-Type': 'application/json',
                         'User-Agent': 'Google Chrome'

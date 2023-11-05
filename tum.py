@@ -25,6 +25,7 @@ import settings
 
 logger = logging.getLogger('')
 SUCCESS = 25
+ping_check_event = threading.Event()
 
 
 class TinyUrlManager:
@@ -36,7 +37,6 @@ class TinyUrlManager:
         if app_config:
             data = {
                 'delay': settings.PING_INTERVAL,
-                'ping_sweep': False,
             }
             self.shared_queue.put(data)
             self.fallback_urls = get_valid_urls(app_config['fallback_urls'])
@@ -44,7 +44,6 @@ class TinyUrlManager:
         else:
             data = {
                 'delay': settings.PING_INTERVAL,
-                'ping_sweep': False,
             }
             self.shared_queue.put(data)
             self.fallback_urls = get_valid_urls(settings.TUNNELING_SERVICE_URLS)
@@ -211,12 +210,11 @@ class TinyUrlManager:
                 match = re.search(r'(\d+)(.*$)?', user_input[1])
                 num, unit = match.groups()
                 num = int(num)
-                if unit in ['m', 'min', 'minutes'] :
+                if unit in ['m', 'min', 'minutes']:
                     num = num * 60
                 if unit in ['h', 'hrs', 'hours']:
                     num = num * 3600
-                with self.lock:
-                    self.shared_data['ping_interval'] = num
+                self.shared_queue.put({'delay': num})
                 print(f'{green}Pinging interval changed to {num} seconds!')
                 logger.info(f'Pinging interval changed to {num} seconds!')
             except (IndexError, ValueError, AttributeError):
@@ -256,6 +254,7 @@ class TinyUrlManager:
             new_tinyurl = TinyUrl(new_id)
             new_tinyurl.instantiate_tinyurl(url, self.api_client)
             self.id_tinyurl_mapping[new_tinyurl.id] = new_tinyurl
+            self.shared_queue.put({'new': {'alias': new_tinyurl.alias, 'url': new_tinyurl.final_url}})
             return new_tinyurl
         except (TinyUrlCreationError, RequestError, NetworkError) as e:
             raise e
@@ -364,8 +363,8 @@ def initialize_loggers():  # move
 def initialize() -> TinyUrlManager:
     initialize_loggers()
     shared_queue = LifoQueue()
-    tum = TinyUrlManager(shared_queue = shared_queue)
-    heartbeat = HeartbeatService(tum.api_client, shared_queue)
+    tum = TinyUrlManager(shared_queue=shared_queue)
+    heartbeat = HeartbeatService(tum.api_client, shared_queue, ping_check_event)
     t1 = threading.Thread(target=tum.run)
     t2 = threading.Thread(target=heartbeat.start_heartbeat_service)
     return t1, t2
