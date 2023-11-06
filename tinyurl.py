@@ -28,7 +28,7 @@ class TinyUrl:
     def instantiate_tinyurl(self, url: str, api_client: ApiClient, expires_at: datetime.datetime = None):
         try:
             data = api_client.create_tinyurl(url, expires_at=expires_at)
-            self.final_url = f'https://{data["url"]}' if not urlparse(data['url']).scheme else data['url']  #  Because tinyurl response sometimes omits scheme
+            self.final_url = f'https://{data["url"]}'.strip('/') if not urlparse(data['url']).scheme else data['url'].strip('/')  #  Because tinyurl response sometimes omits scheme
             self.domain = get_final_domain(self.final_url)
             self.tinyurl = f"https://tinyurl.com/{data['alias']}"
             self.alias = data['alias']
@@ -38,7 +38,7 @@ class TinyUrl:
 
     def update_redirect(self, url: str, api_client: ApiClient):
         try:
-            data = api_client.update_tinyurl_redirect(self.alias, url)
+            data = api_client.update_tinyurl_redirect_user(self.alias, url)
             self.final_url = f'https://{data["url"]}' if not urlparse(data['url']).scheme else data['url']  #  Because tinyurl response sometimes omits scheme
             self.domain = get_final_domain(self.final_url)
             logger.log(SUCCESS, f'{green}Tinyurl({self.id}) updated: {self.tinyurl} --> {self.final_url}!')
@@ -50,7 +50,6 @@ class TinyUrl:
                f'\n__________________________________'\
                f'\nurl: {self.tinyurl}' \
                f'\ntarget: {self.final_url}'\
-               f'\ntoken id: {self.token_id}'
 
     def __del__(self):
         print(f'{bred}Tinyurl ({self.id}) deleted from the system!')

@@ -1,5 +1,6 @@
 import logging
 import concurrent.futures
+import random
 import threading
 from queue import Queue
 import time
@@ -11,6 +12,8 @@ from urllib.parse import urlparse
 
 from api.apiclient import ApiClient
 from utility.ansi_colors import red, yellow, green
+from utility.url_tools import get_final_domain
+from exceptions.tinyurl_exceptions import *
 
 logger = logging.getLogger('')
 SUCCESS = 25
@@ -24,66 +27,93 @@ class HeartbeatService:
         self.api_client = api_client
         self.shared_queue = shared_queue
         self.delay = 60
-        self.alias_url_mapping = {}
+        self.tinyurl_target_mapping = {}
         self.errors = {}  # Dictionary to store URL errors {target_url: errors: []}
-        self.preview_errors = []  #  Dictionary to store URLs that are blocked by tineyrl preview feature
+        self.preview_errors = {}  # Tinyurl: target_url
         self.stop = False
 
     def ping_check(self, url):
         try:
             response = requests.head(url, timeout=3, allow_redirects=True)
             response.raise_for_status()
-            if 'tinyurl.com' == urlparse(response.url).netloc:
-                self.preview_errors.append(url)
-            if urlparse(response.url).netloc != urlparse(url).netloc:
-                self.errors[url] = f"Redirect mismatch: Expected {url}, got {response.url}"
+            response_domain = get_final_domain(response.url)
+            intended_domain = self.tinyurl_target_mapping[url]
+
+            if 'tinyurl.com' == response_domain.strip():
+                self.preview_errors[url] = intended_domain
+            elif response_domain != intended_domain:
+                self.errors[url] = f"Redirect mismatch: Expected domain: {intended_domain}, got {response_domain}"
+            else:
+                pass
         except HTTPError as e:
-            self.errors[url] = f"HTTP Error: {e}"
+            self.errors[url] = f"HTTP Error for {url}: {e}"
         except Timeout:
-            self.errors[url] = "Request timed out"
+            self.errors[url] = f"Request timed out for {url}"
         except RequestException as e:
-            self.errors[url] = f"Request Exception: {e}"
+            self.errors[url] = f"Request Exception for {url}: {e}"
 
     def start_heartbeat_service(self):
-        logger.log(SUCCESS, f'Delay is {self.delay}!')
+        logger.log(SUCCESS, f'Ping interval is set to {self.delay} seconds!')
         while True:
-            logger.info('111111111111')
+            logger.info(f'Tinyurls with preview exception: \n {self.preview_errors.keys()}')
+            if self.preview_errors:
+                logger.info('Fixing previews..')
+                logger.warning('Fixing previews..')
+                futures = [self.executor.submit(self.fix_tinyurl_redirect, url) for url in self.preview_errors.keys()]
+                concurrent.futures.wait(futures)
             start_time = time.time()
             while time.time() - start_time < self.delay and not self.ping_sweep.is_set():
-                if self.shared_queue.not_empty:
-                    self.process_queue_data(self.shared_queue.get('data'))
+                if not self.shared_queue.empty():
+                    self.process_queue_data(self.shared_queue.get())
+                    self.shared_queue.task_done()
                 time.sleep(1)
-
-            logger.info('22222222222222222222')
             if self.ping_sweep.is_set():
                 self.ping_sweep.clear()
 
-            while not self.stop:
-                logger.info('33333333333333333333')
-                self.errors = {}  # Reset errors before each check
-                futures = [self.executor.submit(self.ping_check, url) for url in self.alias_url_mapping]
-                logger.info('33333333333333333333')
-                concurrent.futures.wait(futures)
-                logger.error(f"{red}Errors:", self.errors)
-                self.shared_queue.put(self.errors)
-                logger.info('33333333333333333333')
-                # Add logic to handle errors here, e.g., updating the API client
-                # if the errors indicate that a URL is no longer valid.
-                # Implement your custom logic as needed.
+            self.errors = {}  # Reset errors before each check
+            futures = [self.executor.submit(self.ping_check, url) for url in self.tinyurl_target_mapping.keys()]
+            concurrent.futures.wait(futures)
+            if self.errors.values():
+                for error in self.errors.values():
+                    logger.error(f"{red}Error: {error}")
+            else:
+                logger.log(SUCCESS, f"{green}All redirects point to the right domain!")
+            self.shared_queue.put(self.errors)
+            # Add logic to handle errors here, e.g., updating the API client
+            # if the errors indicate that a URL is no longer valid.
+            # Implement your custom logic as needed.
 
-                # Sleep for 60 seconds (adjust this interval as needed)
-                time.sleep(60)
-
-    def fix_tinyurl_redirect(self, token_index):
-        pass
+    def fix_tinyurl_redirect(self, tinyurl):
+        alias = tinyurl.split('/')[-1]
+        target_url = self.tinyurl_target_mapping[tinyurl]
+        try:
+            data = self.api_client.update_tinyurl_redirect_service(alias, target_url, retry=3)
+            self.tinyurl_target_mapping[tinyurl] = get_final_domain((data['url']))
+            self.ping_check(tinyurl)
+            self.preview_errors.remove(target_url)
+        except (TinyUrlUpdateError, NetworkError,  RequestError, ValueError):
+            logger.warning(f'Failed to self-update to remove preview page for {tinyurl}!')
+        attempts = 0
+        if self.api_client.tunneling_service.tunneler:
+            while attempts < len(self.api_client.tunneling_service.length):
+                try:
+                    self.api_client.update_tinyurl_redirect_service(alias, self.api_client.tunneling_service.tunneler, retry=1, timeout=1)
+                    self.preview_errors.remove(target_url)
+                    logger.info(f'{tinyurl} redirect successfully updated from {target_url} to {tunneler}')
+                    break
+                except (TinyUrlUpdateError, NetworkError,  RequestError, ValueError):
+                    attempts += 1
+                    tunneler = self.api_client.tunneling_service.cycle_next()
+                finally:
+                    time.sleep(random.uniform(5, 10))
 
     def process_queue_data(self, data: dict):
         for key in data.keys():
             if key == 'new':
-                self.alias_url_mapping.update({data['new']['alias']: data['new']['url']})
-                self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=(len(self.alias_url_mapping)))
+                self.tinyurl_target_mapping.update({data['new']['url']: data['new']['target']})
+                self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=(len(self.tinyurl_target_mapping)))
             if key == 'delay':
                 self.delay = data[key]
-                logger.info('Ping changed to: ' + str(self.delay))
+                logger.info('Pinging interval changed to: ' + str(self.delay))
             elif key == 'ping_sweep':
                 self.ping_sweep = True

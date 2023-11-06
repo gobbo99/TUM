@@ -75,7 +75,40 @@ class ApiClient:
         NetworkError: If there's a network error during the update.
         RequestError: If the request to update the TinyURL fails.
     """
-    def update_tinyurl_redirect(self, alias: str, target_url: str, headers: dict = None):
+    def update_tinyurl_redirect_service(self, alias: str, target_url: str, headers: dict = None, retry: int = 3,
+                                        timeout: int = 3):
+        headers = self.build_headers(token=self.alias_token_mapping[alias], headers=headers)
+        request_url = f'{BASE_URL}/change'
+        payload = {
+            'domain': 'tinyurl.com',
+            'url': target_url,
+            'alias': alias,
+        }
+        delay = 1
+        attempts = 0
+        while attempts < retry:
+            try:
+                response = requests.patch(url=request_url, headers=headers, data=json.dumps(payload), timeout=timeout)
+                response.raise_for_status()
+                data = response.json()['data']
+                return data
+            except HTTPError as e:
+                if response.json() and 'errors' in response.json():
+                    raise TinyUrlUpdateError(response.json()['errors'], response.status_code)
+                else:
+                    raise TinyUrlUpdateError([str(e)], response.status_code)
+            except Timeout:
+                attempts += 1
+                if attempts == retry:
+                    raise NetworkError('Connection error. Request timed out!')
+                time.sleep(delay)
+                delay *= 2
+            except RequestException:
+                raise RequestError(target_url)
+            except ValueError:
+                raise NetworkError("Can't find ['data'] in response! Check Tinyurl docs")
+
+    def update_tinyurl_redirect_user(self, alias: str, target_url: str, headers: dict = None):
         self.check_target_url(target_url)
         headers = self.build_headers(token=self.alias_token_mapping[alias], headers=headers)
         request_url = f'{BASE_URL}/change'
@@ -95,9 +128,9 @@ class ApiClient:
                 return data
             except HTTPError as e:
                 if response.json() and 'errors' in response.json():
-                    raise TinyUrlCreationError(response.json()['errors'], response.status_code)
+                    raise TinyUrlUpdateError(response.json()['errors'], response.status_code)
                 else:
-                    raise TinyUrlCreationError([str(e)], response.status_code)
+                    raise TinyUrlUpdateError([str(e)], response.status_code)
             except Timeout:
                 attempts += 1
                 if attempts == 3:
@@ -113,7 +146,7 @@ class ApiClient:
         self.token_index_selected = token_id
 
     @staticmethod
-    def check_target_url(url):
+    def check_target_url(url: str):
         try:
             response = requests.head(url, timeout=5)
             response.raise_for_status()

@@ -9,7 +9,7 @@ from typing import Dict, List, Any, Tuple, Optional
 import datetime
 from pathlib import Path
 import threading
-from queue import LifoQueue
+from queue import Queue
 import urllib.parse
 
 from tinyurl import TinyUrl
@@ -23,27 +23,30 @@ from services.heartbeat_2 import HeartbeatService
 import logconfig
 import settings
 
-logger = logging.getLogger('')
 SUCCESS = 25
+logger = logging.getLogger('')
+logging.addLevelName(SUCCESS, 'SUCCESS')
+logger.setLevel(logging.INFO)
 ping_check_event = threading.Event()
 
 
 class TinyUrlManager:
-    def __init__(self, shared_queue: LifoQueue, app_config: dict = None):
+    def __init__(self, shared_queue: Queue, app_config: dict = None):
         self.selected_id: int = None
         self.auth_tokens: [] = None  # identical to authclients
         self.id_tinyurl_mapping = {}
         self.shared_queue = shared_queue
+        self.ping_interval = settings.PING_INTERVAL
         if app_config:
             data = {
-                'delay': settings.PING_INTERVAL,
+                'delay': app_config['delay'],
             }
             self.shared_queue.put(data)
             self.fallback_urls = get_valid_urls(app_config['fallback_urls'])
             self.auth_tokens = app_config['auth_tokens']
         else:
             data = {
-                'delay': settings.PING_INTERVAL,
+                'delay': self.ping_interval,
             }
             self.shared_queue.put(data)
             self.fallback_urls = get_valid_urls(settings.TUNNELING_SERVICE_URLS)
@@ -179,13 +182,13 @@ class TinyUrlManager:
             self.synchronize_data()
             self.print_all()
             print(f'{green}_______________________')
-            print(f"Pinging interval is {self.shared_data['ping_interval']}s")
+            print(f"Pinging interval is {self.ping_interval} seconds")
 
         elif command == 'list' or command == 'l':
             self.synchronize_data()
             self.print_short()
             print(f'{green}_______________________')
-            print(f"Pinging interval is {self.shared_data['ping_interval']}s")
+            print(f"Pinging interval is {self.ping_interval} seconds")
 
         elif command == 'tokens':
             self.print_tokens()
@@ -215,8 +218,8 @@ class TinyUrlManager:
                 if unit in ['h', 'hrs', 'hours']:
                     num = num * 3600
                 self.shared_queue.put({'delay': num})
+                self.ping_interval = num
                 print(f'{green}Pinging interval changed to {num} seconds!')
-                logger.info(f'Pinging interval changed to {num} seconds!')
             except (IndexError, ValueError, AttributeError):
                 print(f'{red}[ delay <seconds> or delay <minutes>m]')
                 raise InputException(' '.join(user_input))
@@ -224,11 +227,8 @@ class TinyUrlManager:
         elif command == 'ping':
             logger.info('Ping sweeping all urls...')
             with Spinner(text='Ping sweeping all urls...\n', spinner_type='bouncing_ball', color='cyan', delay=0.05):
-                with self.lock:
-                    self.q
-                    self.shared_data['ping_sweep'] = True
-                    time.sleep(5)
-                    self.shared_data['ping_sweep'] = False
+                ping_check_event.set()
+                time.sleep(5)
             print(cursor_up + erase_line)
             print('\033[2A')
 
@@ -254,7 +254,8 @@ class TinyUrlManager:
             new_tinyurl = TinyUrl(new_id)
             new_tinyurl.instantiate_tinyurl(url, self.api_client)
             self.id_tinyurl_mapping[new_tinyurl.id] = new_tinyurl
-            self.shared_queue.put({'new': {'alias': new_tinyurl.alias, 'url': new_tinyurl.final_url}})
+            queue_data = {'new': {'url': new_tinyurl.tinyurl, 'target': new_tinyurl.domain}}
+            self.shared_queue.put(queue_data)
             return new_tinyurl
         except (TinyUrlCreationError, RequestError, NetworkError) as e:
             raise e
@@ -291,11 +292,7 @@ class TinyUrlManager:
         print(f'\n{bwhite}Current token:\n{green}{self.api_client.auth_tokens[self.token_id - 1]}')
 
     def synchronize_data(self):
-        if self.shared_data['delete_by_id']:
-            self.purge_inactive_tinyurl(self.shared_data['delete_by_id'])
-        for tinyurl in self.id_tinyurl_mapping.values():
-            tinyurl.final_url = self.shared_data[tinyurl.id].split(';')[0]
-            tinyurl.domain = self.shared_data[tinyurl.id].split(';')[1]
+        pass
 
     def get_next_available_id(self):
         if self.id_tinyurl_mapping.keys():
@@ -341,8 +338,6 @@ def initialize_loggers():  # move
     log_format = "%(custom_time)s - %(levelname)s - %(message)s"
     color_formatter = logconfig.ColoredFormatter(log_format)
     debug_formatter = logconfig.DebugFormatter(log_format)
-    logging.addLevelName(SUCCESS, 'SUCCESS')
-    logger.setLevel(logging.DEBUG)
 
     #  File Handler
     full_path, temp_file = create_log_file()
@@ -352,17 +347,16 @@ def initialize_loggers():  # move
 
     #  Live feed handler
     temp_handler = logconfig.LiveFeedHandler(color_formatter, temp_file, settings.TERMINAL_EMULATOR)
-    temp_handler.setLevel(logging.INFO)
     temp_handler.setFormatter(color_formatter)
 
-    logger.addHandler(file_handler)
     logger.addHandler(temp_handler)
+
 
 
 @Spinner(text='Loading configuration...', spinner_type='pulse_spinner', color='cyan', delay=0.1)
 def initialize() -> TinyUrlManager:
     initialize_loggers()
-    shared_queue = LifoQueue()
+    shared_queue = Queue()
     tum = TinyUrlManager(shared_queue=shared_queue)
     heartbeat = HeartbeatService(tum.api_client, shared_queue, ping_check_event)
     t1 = threading.Thread(target=tum.run)
