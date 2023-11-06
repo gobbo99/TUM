@@ -33,7 +33,7 @@ class TinyUrl:
             self.tinyurl = f"https://tinyurl.com/{data['alias']}"
             self.alias = data['alias']
             logger.log(SUCCESS, f'{green}Tinyurl({self.id}) created! {self.tinyurl} --> {self.final_url}!')
-        except (TinyUrlCreationError, RequestError, NetworkError) as e:
+        except (TinyUrlCreationError, RequestError, NetworkError, ValueError) as e:
             raise e
 
     def update_redirect(self, url: str, api_client: ApiClient):
@@ -46,13 +46,16 @@ class TinyUrl:
             raise e
 
     def __str__(self):
-        return f'\n{yellow}Tinyurl[{self.id}]'\
-               f'\n__________________________________'\
-               f'\nurl: {self.tinyurl}' \
+        return f'\n{byellow}Tinyurl[{self.id}]'\
+               f'\n__________________________________{yellow}'\
+               f'\nurl:    {self.tinyurl}' \
                f'\ntarget: {self.final_url}'\
 
+
     def __del__(self):
-        print(f'{bred}Tinyurl ({self.id}) deleted from the system!')
+        if self.tinyurl:
+            print(f'{bred}Tinyurl ({self.id}) deleted from the system!')
+            logger.info(f'{bred}Tinyurl ({self.id})({self.tinyurl}) deleted from the system!')
 
 
     """

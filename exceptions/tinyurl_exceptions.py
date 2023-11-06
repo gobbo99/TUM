@@ -33,20 +33,22 @@ class TinyUrlUpdateError(Exception):
 
 
 class InputException(Exception):
-    def __init__(self, message):
+    def __init__(self, input, message=None):
+        self.input = input
         self.message = message
 
     def __str__(self):
-        return self.message
+        return self.input + '\n' + self.message
 
 
 class RequestError(Exception):
-    def __init__(self, url):
-        self.message = f'{red}Redirect url {url} seems to be invalid!'
+    def __init__(self, message, url=None):
+        self.message = f'{red}{message}'
+        self.url = url
         super().__init__(self.message)
 
     def __str__(self):
-        return self.message
+        return f'{self.message}: {self.url}' if self.url else self.message
 
 
 class NetworkError(Exception):

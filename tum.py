@@ -11,6 +11,8 @@ from pathlib import Path
 import threading
 from queue import Queue
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, ALL_COMPLETED
+
 
 from tinyurl import TinyUrl
 from api.apiclient import ApiClient
@@ -59,9 +61,10 @@ class TinyUrlManager:
         slow_print(f'{byellow}TUM[{settings.VERSION}] {cyan}\u2665{reset}', 0.04)
         slow_print('__________', 0.04)
         print(menu)
+        self.create_from_list(settings.TUNNELING_SERVICE_URLS)
         while True:
             try:
-                user_input = input(f'\n{white}> ').strip()
+                user_input = input(f'\n{bwhite}>{byellow} ').strip()
                 if self.handle_user_input(user_input):
                     break
             except InputException as e:
@@ -221,8 +224,8 @@ class TinyUrlManager:
                 self.ping_interval = num
                 print(f'{green}Pinging interval changed to {num} seconds!')
             except (IndexError, ValueError, AttributeError):
-                print(f'{red}[ delay <seconds> or delay <minutes>m]')
-                raise InputException(' '.join(user_input))
+                specific = f'{white}Correct format: {byellow}[ delay <seconds> or delay <minutes>m]'
+                raise InputException(' '.join(user_input), specific)
 
         elif command == 'ping':
             logger.info('Ping sweeping all urls...')
@@ -248,7 +251,7 @@ class TinyUrlManager:
             handle_invalid_input(' '.join(user_input))
 
     @Spinner(text='Sending request to create...', spinner_type='bouncing_ball', color='cyan', delay=0.05)
-    def create_tinyurl(self, url: str):
+    def create_tinyurl(self, url: str, urls: [] = None):
         new_id = self.get_next_available_id()
         try:
             new_tinyurl = TinyUrl(new_id)
@@ -257,7 +260,8 @@ class TinyUrlManager:
             queue_data = {'new': {'url': new_tinyurl.tinyurl, 'target': new_tinyurl.domain}}
             self.shared_queue.put(queue_data)
             return new_tinyurl
-        except (TinyUrlCreationError, RequestError, NetworkError) as e:
+        except (TinyUrlCreationError, RequestError, NetworkError, ValueError) as e:
+            print('eeeeeeeeeeeeeee')
             raise e
 
     @Spinner(text='Sending request to update...', spinner_type='bouncing_ball', color='cyan', delay=0.05)
@@ -266,14 +270,32 @@ class TinyUrlManager:
             updated_tinyurl: TinyUrl = self.id_tinyurl_mapping[self.selected_id]
             updated_tinyurl.update_redirect(url, self.api_client)
             url_info = f'{updated_tinyurl.final_url};{updated_tinyurl.domain}'
-            with self.lock:
-                self.shared_data[updated_tinyurl.id] = url_info
 
         except (TinyUrlUpdateError, RequestError, NetworkError) as e:
             raise e
 
     def delete_tinyurl(self, id):
         pass
+
+    def create_from_list(self, urls: List[str]):
+        results = []
+        with ThreadPoolExecutor(max_workers=6) as executor:  # Adjust max_workers as needed
+            futures = [executor.submit(self.create_tinyurl, url) for url in urls]
+            wait(futures, return_when=ALL_COMPLETED)
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+                results.append(result)  # Store the result in the list
+                for result in results:
+                    print(result.tinyurl)
+            except Exception as e:
+                pass  # Ignore exceptions
+
+            # Handle exceptions
+
+
+
+
 
     def print_all(self):
         for tinyurl in self.id_tinyurl_mapping.values():
@@ -282,9 +304,13 @@ class TinyUrlManager:
     def print_short(self):
         for tinyurl in self.id_tinyurl_mapping.values():
             if len(tinyurl.final_url) > 32:
-                print(f'{yellow}{tinyurl.id}. {tinyurl.tinyurl} -->  http://{tinyurl.domain}/...')
+                extra_len = len(tinyurl.tinyurl.split('.')[-1])
+                extra_space = (5 - extra_len) * ' '
+                print(f'{yellow}{tinyurl.id}. {tinyurl.tinyurl}{extra_space}  -->  http://{tinyurl.domain}/...')
             else:
-                print(f'{yellow}{tinyurl.id}. {tinyurl.tinyurl} -->  {tinyurl.final_url} ')
+                extra_len = len(tinyurl.tinyurl.split('.')[-1])
+                extra_space = (5 - extra_len) * ' '
+                print(f'{yellow}{tinyurl.id}. {tinyurl.tinyurl}{extra_space}{extra_space}  -->  {tinyurl.final_url} ')
 
     def print_tokens(self):
         for index, token in enumerate(self.auth_tokens):
@@ -318,9 +344,11 @@ class TinyUrlManager:
             self.shared_data['delete_by_id'] = None
 
 
-def handle_invalid_input(input):  # move
+def handle_invalid_input(input, specific: str = None):  # move
     print(f'{red}\nInvalid input: {reset}{input}')
-    print(f"{white}Type 'help' to display options!")
+    if specific:
+        print(specific)
+    print(f"{white}Type 'help' to display options!\n")
 
 
 def create_log_file():
@@ -352,7 +380,6 @@ def initialize_loggers():  # move
     logger.addHandler(temp_handler)
 
 
-
 @Spinner(text='Loading configuration...', spinner_type='pulse_spinner', color='cyan', delay=0.1)
 def initialize() -> TinyUrlManager:
     initialize_loggers()
@@ -360,7 +387,7 @@ def initialize() -> TinyUrlManager:
     tum = TinyUrlManager(shared_queue=shared_queue)
     heartbeat = HeartbeatService(tum.api_client, shared_queue, ping_check_event)
     t1 = threading.Thread(target=tum.run)
-    t2 = threading.Thread(target=heartbeat.start_heartbeat_service)
+    t2 = threading.Thread(target=heartbeat.run_heartbeat_service)
     return t1, t2
 
 

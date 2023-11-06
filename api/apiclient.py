@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 import requests
 from requests.exceptions import *
+from urllib3.exceptions import LocationParseError
 
 from utility.url_tools import generate_string_5_30
 from utility import green, red, bgreen, bred, byellow, yellow
@@ -54,8 +55,8 @@ class ApiClient:
                     raise TinyUrlCreationError([str(e)], response.status_code)
             except Timeout:
                 raise NetworkError('Connection error. Request timed out!')
-            except RequestException:
-                raise RequestError(target_url)
+            except RequestException as e:
+                raise RequestError(e)
             except ValueError:
                 raise NetworkError("Can't find ['data'] in response! Check Tinyurl docs")
 
@@ -84,28 +85,31 @@ class ApiClient:
             'url': target_url,
             'alias': alias,
         }
-        delay = 1
-        attempts = 0
-        while attempts < retry:
+        while True:
             try:
                 response = requests.patch(url=request_url, headers=headers, data=json.dumps(payload), timeout=timeout)
                 response.raise_for_status()
                 data = response.json()['data']
                 return data
             except HTTPError as e:
+                if retry:
+                    retry -= 1
+                    continue
                 if response.json() and 'errors' in response.json():
                     raise TinyUrlUpdateError(response.json()['errors'], response.status_code)
                 else:
                     raise TinyUrlUpdateError([str(e)], response.status_code)
             except Timeout:
-                attempts += 1
-                if attempts == retry:
-                    raise NetworkError('Connection error. Request timed out!')
-                time.sleep(delay)
-                delay *= 2
-            except RequestException:
-                raise RequestError(target_url)
+                if retry:
+                    retry -= 1
+                raise NetworkError('Connection error. Request timed out!')
+            except RequestException as e:
+                if retry:
+                    retry -= 1
+                raise RequestError(e)
             except ValueError:
+                if retry:
+                    retry -= 1
                 raise NetworkError("Can't find ['data'] in response! Check Tinyurl docs")
 
     def update_tinyurl_redirect_user(self, alias: str, target_url: str, headers: dict = None):
@@ -137,8 +141,8 @@ class ApiClient:
                     raise NetworkError('Connection error. Request timed out!')
                 time.sleep(delay)
                 delay *= 2
-            except RequestException:
-                raise RequestError(target_url)
+            except RequestException as e:
+                raise RequestError(e)
             except ValueError:
                 raise NetworkError("Can't find ['data'] in response! Check Tinyurl docs")
 
@@ -154,11 +158,15 @@ class ApiClient:
                 return
             return
         except HTTPError as e:
-            raise RequestError(f"Error for {url}: {e}")
+            raise RequestError(f"Error: {e}")
         except Timeout:
             raise NetworkError('Connection error. Request timed out!')
-        except RequestException:
-            raise RequestError(url)
+        except RequestException as e:
+            raise RequestError("Unknown url", url=url)
+        except RequestError:
+            raise ValueError('Incorrect url format!')
+        except LocationParseError:
+            raise RequestError("Incorrect url format", url=url)
 
     def build_headers(self, token_index: Optional[int] = None, token: Optional[str] = None, headers: Optional[dict] = None) -> dict:  # can be async now
         auth_token = token or self.alias_token_mapping.get(token_index)
