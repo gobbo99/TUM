@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
 
-from utility.ansi_colors import success, error, warning, info
+from utility.ansi_codes import success, error, warning, info
 
 
 class ColoredFormatter(logging.Formatter):

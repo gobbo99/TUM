@@ -1,5 +1,5 @@
 import logging
-from utility.ansi_colors import *
+from utility.ansi_codes import *
 
 
 class TinyUrlPreviewException(Exception):

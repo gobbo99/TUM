@@ -47,5 +47,5 @@ error = f"{yellow}[{bred}X{yellow}]"
 info = f"{yellow}[{bred}\u2022{yellow}]"
 warning = f"{yellow}[{bwhite}!{yellow}]"
 
-
-
+cursor_up = '\x1b[1A'
+erase_line = '\x1b[2K'

@@ -5,7 +5,7 @@ import inspect
 import threading
 from typing import Callable, Any
 
-from utility.ansi_colors import ansi_fg_colors
+from utility.ansi_codes import ansi_fg_colors
 from .frames import spinner_frames
 
 

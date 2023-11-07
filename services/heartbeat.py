@@ -1,38 +1,75 @@
-import logging
 import concurrent.futures
 from concurrent.futures import wait, ALL_COMPLETED
 import random
-from threading import Event
-from queue import Queue
+import logging
+from threading import Event, Thread
+from queue import Queue, Empty
 import time
-from typing import List, Any, Dict
 from urllib.parse import urlparse
 
 import requests
 from requests.exceptions import RequestException, HTTPError, Timeout
 
 from api.apiclient import ApiClient
-from utility.ansi_colors import red, yellow, green
 from utility.url_tools import get_final_domain
 from exceptions.tinyurl_exceptions import *
 from settings import MAX_THREADS
 
-logger = logging.getLogger('')
 SUCCESS = 25
-KEYS = ('ping_sweep', 'new', 'delay')
+logger = logging.getLogger('')
 
 
 class HeartbeatService:
-    def __init__(self, api_client: ApiClient, shared_queue: Queue, update_event: Event):
+    def __init__(self, shared_queue: Queue, update_event: Event, api_client: ApiClient = None):
         self.update_event = update_event
+        self.shared_queue = shared_queue
+        self.shared_queue = shared_queue
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_THREADS)
         self.api_client = api_client
-        self.shared_queue = shared_queue
         self.delay = 60
         self.tinyurl_target_mapping = {}
         self.errors = {}  # Dictionary to store URL errors {target_url: errors: []}
         self.preview_errors = {}  # Tinyurl: target_url
-        self.stop = False
+        self.online = True
+
+    def run_heartbeat_service(self):
+        logger.info(f'Ping interval is set to {self.delay} seconds!')
+        logger.info(f'Using {MAX_THREADS} threads for this service!')
+        while self.online:
+            start_time = time.time()
+            while not self.update_event.is_set():
+                elapsed_time = time.time() - start_time
+                remaining_time = self.delay - elapsed_time
+                if remaining_time <= 0:
+                    break
+                sleep_time = min(1, remaining_time)
+                time.sleep(sleep_time)
+
+            self._get_all_items_from_queue()
+
+            self.update_event.clear() if self.update_event.is_set() else None
+            self.perform_ping_sweep()
+            logger.warning('\n'.join("{}: {}".format(k, v) for k, v in self.errors.items()))
+            # Add logic to handle errors here, e.g., updating the API client
+            # if the errors indicate that a URL is no longer valid.
+            # Implement your custom logic as needed.
+            if self.preview_errors:
+                logger.info(f'Fixing previews... {self.preview_errors.keys()}')
+                futures = [self.executor.submit(self.fix_tinyurl_redirect, url) for url in
+                           self.preview_errors.keys()]
+                concurrent.futures.wait(futures)
+                wait(futures, return_when=ALL_COMPLETED)
+
+        logger.info('Live logger turned off!')
+
+    def start_heartbeat_service(self):
+        while True:
+            if self.online:
+                self.run_heartbeat_service()
+            else:
+                while not self.update_event.is_set():
+                    time.sleep(5)
+                self._process_queue_data(self.shared_queue.get_nowait())
 
     def ping_check(self, tinyurl, message=False):
         try:
@@ -43,7 +80,7 @@ class HeartbeatService:
             response_domain = get_final_domain(response.url)
             intended_domain = self.tinyurl_target_mapping[tinyurl]
 
-            if 'tinyurl.com' == response_domain:
+            if 'tinyurl.com' in response_domain:
                 self.preview_errors[tinyurl] = intended_domain
             if response_domain != intended_domain:
                 self.errors[tinyurl] = f"Redirect mismatch: Expected domain: {intended_domain}, got {response_domain}"
@@ -57,35 +94,10 @@ class HeartbeatService:
         except ValueError as e:
             raise e
 
-    def run_heartbeat_service(self):
-        logger.log(SUCCESS, f'Ping interval is set to {self.delay} seconds!')
-        logger.log(SUCCESS, f'Using {MAX_THREADS} threads for this service!')
-        while True:
-            if self.preview_errors:  #  add with other errors fix simultaneously
-                logger.info('Fixing previews..')
-                futures = [self.executor.submit(self.fix_tinyurl_redirect, url) for url in self.preview_errors.keys()]
-                concurrent.futures.wait(futures)
-                wait(futures, return_when=ALL_COMPLETED)
-
-            start_time = time.time()
-            while time.time() - start_time < self.delay and not self.update_event.is_set():
-                if not self.shared_queue.empty():
-                    self._process_queue_data(self.shared_queue.get())
-                    self.shared_queue.task_done()
-                time.sleep(1)
-
-            self.update_event.clear() if self.update_event.is_set() else None
-            self.perform_ping_sweep()
-            logger.warning(f'All errors: {self.errors.values()}')
-            # Add logic to handle errors here, e.g., updating the API client
-            # if the errors indicate that a URL is no longer valid.
-            # Implement your custom logic as needed.
-
     def perform_ping_sweep(self):
-        self.errors = {}  # Reset errors before each check
         futures = [self.executor.submit(self.ping_check, url, True) for url in self.tinyurl_target_mapping.keys()]
-        concurrent.futures.wait(futures)
-        if self.errors.values():
+        wait(futures, return_when=ALL_COMPLETED)
+        if self.errors.values() or self.preview_errors:
             for error in self.errors.values():
                 logger.error(f"{red}Error: {error}")
         else:
@@ -124,7 +136,7 @@ class HeartbeatService:
                     break
                 except (TinyUrlUpdateError, NetworkError,  RequestError, ValueError):
                     attempts += 1
-                    tunneler = self.api_client.tunneling_service.cycle_next()
+                    self.api_client.tunneling_service.cycle_next()
                 finally:
                     time.sleep(random.uniform(2, 6))
 
@@ -132,6 +144,13 @@ class HeartbeatService:
         self.shared_queue.put(data)
         self.update_event.set()
 
+    def _get_all_items_from_queue(self):
+        while True:
+            try:
+                data = self.shared_queue.get_nowait()
+                self._process_queue_data(data)
+            except Empty:
+                break
 
     def _process_queue_data(self, data: dict):
         for key, data in data.items():
@@ -139,8 +158,12 @@ class HeartbeatService:
                 self.tinyurl_target_mapping[data['url']] = data['domain']
             elif key == 'delay':
                 self.delay = data
+                self.update_event.clear()
                 logger.info(f'Pinging interval changed to: {self.delay}')
             elif key == 'threads':
                     self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=data)
+            elif key == 'online':
+                self.online = data
+                self.update_event.clear()
             else:
                 pass
