@@ -16,6 +16,7 @@ try:
     TOKENS_SEPERATOR = config_file['Path']['auth_tokens_seperator'].strip().replace('__NEWLINE__', '\n')
     FALLBACK_URLS_SEPERATOR = config_file['Path']['fallback_urls_seperator'].strip().replace('__NEWLINE__', '\n')
     PING_INTERVAL = config_file['Options'].getint('ping_interval') or 60
+    MAX_THREADS = config_file['Options'].getint('max_threads') or 4
     TERMINAL_EMULATOR = (config_file['Options'].get('terminal_emulator') or 'gnome')
 
     AUTH_TOKENS = read_data_from_file(TOKENS_PATH, TOKENS_SEPERATOR).copy()

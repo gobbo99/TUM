@@ -26,11 +26,12 @@ class ApiClient:
         self.alias_token_mapping: Dict[int, str] = {}
         self.tunneling_service: TunnelServiceHandler = TunnelServiceHandler(fallback_urls)
 
-    def create_tinyurl(self, target_url: str, expires_at: str = None):
-        token_index = self.token_index_selected   # So it can be async and not update during func execution
+    def create_tinyurl(self, target_url: str, expires_at: str = None, no_check: bool = False):
+        token_index = self.token_index_selected
         headers = self.build_headers(token=self.auth_tokens[token_index])
         request_url = f'{BASE_URL}/create'
-        self.check_target_url(target_url)
+        if not no_check:
+            self.check_target_url(target_url)
 
         length = 5
         while True:
@@ -153,10 +154,9 @@ class ApiClient:
     def check_target_url(url: str):
         try:
             response = requests.head(url, timeout=5)
-            response.raise_for_status()
             if urlparse(response.url).netloc == urlparse(url).netloc:
                 return
-            return
+            response.raise_for_status()
         except HTTPError as e:
             raise RequestError(f"Error: {e}")
         except Timeout:

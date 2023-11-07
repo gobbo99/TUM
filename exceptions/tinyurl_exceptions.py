@@ -38,7 +38,7 @@ class InputException(Exception):
         self.message = message
 
     def __str__(self):
-        return self.input + '\n' + self.message
+        return self.input
 
 
 class RequestError(Exception):

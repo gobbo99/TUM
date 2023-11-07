@@ -25,9 +25,9 @@ class TinyUrl:
         self.final_url = None
         self.id = new_id
 
-    def instantiate_tinyurl(self, url: str, api_client: ApiClient, expires_at: datetime.datetime = None):
+    def instantiate_tinyurl(self, url: str, api_client: ApiClient, expires_at = None, no_check=False):
         try:
-            data = api_client.create_tinyurl(url, expires_at=expires_at)
+            data = api_client.create_tinyurl(url, expires_at=expires_at, no_check=no_check)
             self.final_url = f'https://{data["url"]}'.strip('/') if not urlparse(data['url']).scheme else data['url'].strip('/')  #  Because tinyurl response sometimes omits scheme
             self.domain = get_final_domain(self.final_url)
             self.tinyurl = f"https://tinyurl.com/{data['alias']}"
@@ -50,12 +50,6 @@ class TinyUrl:
                f'\n__________________________________{yellow}'\
                f'\nurl:    {self.tinyurl}' \
                f'\ntarget: {self.final_url}'\
-
-
-    def __del__(self):
-        if self.tinyurl:
-            print(f'{bred}Tinyurl ({self.id}) deleted from the system!')
-            logger.info(f'{bred}Tinyurl ({self.id})({self.tinyurl}) deleted from the system!')
 
 
     """

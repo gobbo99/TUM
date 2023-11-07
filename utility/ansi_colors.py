@@ -37,6 +37,7 @@ ansi_fg_colors = {
     'blue': '\033[34m',
     'magenta': '\033[35m',
     'cyan': '\033[36m',
+    'bcyan': '\033[1;36m',
     'white': '\033[37m',
     'reset': '\033[0m'  # Reset color to default
 }

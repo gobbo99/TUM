@@ -2,16 +2,19 @@ import os
 import random
 import subprocess
 import sys
+import select
 import re
 import logging
 import time
+import urllib
 from typing import Dict, List, Any, Tuple, Optional
 import datetime
 from pathlib import Path
-import threading
+from threading import Thread, Event
 from queue import Queue
-import urllib.parse
+from urllib.parse import urlparse, urljoin
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait, ALL_COMPLETED
+from collections import OrderedDict
 
 
 from tinyurl import TinyUrl
@@ -20,8 +23,7 @@ from utility import *
 from consts import menu, cursor_up, erase_line
 from exceptions.tinyurl_exceptions import TinyUrlCreationError, TinyUrlUpdateError, InputException, NetworkError, \
     RequestError
-from services.heartbeat import status_service
-from services.heartbeat_2 import HeartbeatService
+from services.heartbeat import HeartbeatService
 import logconfig
 import settings
 
@@ -29,14 +31,14 @@ SUCCESS = 25
 logger = logging.getLogger('')
 logging.addLevelName(SUCCESS, 'SUCCESS')
 logger.setLevel(logging.INFO)
-ping_check_event = threading.Event()
+update_event = Event()
 
 
 class TinyUrlManager:
     def __init__(self, shared_queue: Queue, app_config: dict = None):
         self.selected_id: int = None
         self.auth_tokens: [] = None  # identical to authclients
-        self.id_tinyurl_mapping = {}
+        self.id_tinyurl_mapping = OrderedDict()
         self.shared_queue = shared_queue
         self.ping_interval = settings.PING_INTERVAL
         if app_config:
@@ -57,16 +59,28 @@ class TinyUrlManager:
         self.api_client = ApiClient(self.auth_tokens, fallback_urls=self.fallback_urls)
         self.token_id = 1
 
-    def run(self):
+    def start_cli(self):
         slow_print(f'{byellow}TUM[{settings.VERSION}] {cyan}\u2665{reset}', 0.04)
         slow_print('__________', 0.04)
         print(menu)
         self.create_from_list(settings.TUNNELING_SERVICE_URLS)
-        while True:
+        run = True
+        while run:
             try:
-                user_input = input(f'\n{bwhite}>{byellow} ').strip()
-                if self.handle_user_input(user_input):
-                    break
+                print(f'{bwhite}\n>{byellow} ', end='')
+                while not update_event.is_set():
+                    if is_input_available():
+                        user_input = input().strip()
+                        if self.handle_user_input(user_input):
+                            run = False
+                        else:
+                            print()
+                            break
+
+                if update_event.is_set():
+                    self.process_updated_data(self.shared_queue.get())
+                    update_event.clear()
+
             except InputException as e:
                 handle_invalid_input(e)
             except TinyUrlCreationError as e:
@@ -106,15 +120,6 @@ class TinyUrlManager:
 
             self.id_tinyurl_mapping.update({new_tinyurl.id: new_tinyurl})
             self.selected_id = new_tinyurl.id
-            """
-            with self.lock:
-                self.shared_data[new_tinyurl.id] = f'{new_tinyurl.final_url};{new_tinyurl.domain}'
-
-            new_process = Process(target=status_service, args=(new_tinyurl, self.lock, self.shared_data,))
-            new_process.daemon = True
-            new_process.start()
-            self.id_process_mapping[new_tinyurl.id] = new_process
-            """
 
         elif command == 'select':
             try:
@@ -175,11 +180,11 @@ class TinyUrlManager:
 
         elif command == 'current':
             self.synchronize_data()
-            selected_tinyurl = self.id_tinyurl_mapping[self.selected_id]
-            if selected_tinyurl.__str__() == 'None':
+            if not self.selected_id:
                 print(f'{red}No tinyurl is selected!')
             else:
-                print(selected_tinyurl.__str__())
+                selected_tinyurl = self.id_tinyurl_mapping[self.selected_id]
+                print(selected_tinyurl)
 
         elif command == 'info':
             self.synchronize_data()
@@ -207,7 +212,7 @@ class TinyUrlManager:
                 else:
                     self.token_id = token_id
                     self.api_client.token_index_selected = token_id - 1
-                    print(f'{bwhite}Token changed to:\n{yellow}{self.auth_tokens[token_id - 1]}')
+                    print(f'{bwhite}Token changed to:\n{green}{self.auth_tokens[token_id - 1]}')
             except (IndexError, ValueError, AttributeError) as e:
                 raise InputException(' '.join(user_input))
 
@@ -228,12 +233,10 @@ class TinyUrlManager:
                 raise InputException(' '.join(user_input), specific)
 
         elif command == 'ping':
-            logger.info('Ping sweeping all urls...')
-            with Spinner(text='Ping sweeping all urls...\n', spinner_type='bouncing_ball', color='cyan', delay=0.05):
-                ping_check_event.set()
-                time.sleep(5)
-            print(cursor_up + erase_line)
-            print('\033[2A')
+            with Spinner(text='Ping sweeping all urls...', spinner_type='bouncing_ball', color='bcyan', delay=0.05):
+                if not update_event.is_set():
+                    update_event.set()
+                    time.sleep(5)
 
         elif command == 'help':
             print(menu)
@@ -243,6 +246,7 @@ class TinyUrlManager:
             animations = ['waves', 'decrypt', 'blackhole', 'burn']
             command = f'tte {random.choice(animations)}'
             subprocess.run(command, input=exit_text, shell=True)
+            return -1
 
         elif command == 'clear' or command == 'cls':
             os.system('clear')  # Unix
@@ -250,72 +254,84 @@ class TinyUrlManager:
         else:
             handle_invalid_input(' '.join(user_input))
 
-    @Spinner(text='Sending request to create...', spinner_type='bouncing_ball', color='cyan', delay=0.05)
-    def create_tinyurl(self, url: str, urls: [] = None):
-        new_id = self.get_next_available_id()
+    @Spinner(text='Sending request to create...', spinner_type='bouncing_ball', color='bcyan', delay=0.05)
+    def create_tinyurl(self, url: str, no_check: bool = False, new_id: int = None):
+        if not new_id:
+            new_id = self.get_next_available_id()
         try:
             new_tinyurl = TinyUrl(new_id)
-            new_tinyurl.instantiate_tinyurl(url, self.api_client)
+            new_tinyurl.instantiate_tinyurl(url, self.api_client, no_check=no_check)
             self.id_tinyurl_mapping[new_tinyurl.id] = new_tinyurl
-            queue_data = {'new': {'url': new_tinyurl.tinyurl, 'target': new_tinyurl.domain}}
+            queue_data = {'new': {'url': new_tinyurl.tinyurl, 'domain': new_tinyurl.domain}}
             self.shared_queue.put(queue_data)
             return new_tinyurl
         except (TinyUrlCreationError, RequestError, NetworkError, ValueError) as e:
-            print('eeeeeeeeeeeeeee')
             raise e
 
-    @Spinner(text='Sending request to update...', spinner_type='bouncing_ball', color='cyan', delay=0.05)
+    @Spinner(text='Sending request to update...', spinner_type='bouncing_ball', color='bcyan', delay=0.05)
     def update_tinyurl(self, url: str):
         try:
             updated_tinyurl: TinyUrl = self.id_tinyurl_mapping[self.selected_id]
             updated_tinyurl.update_redirect(url, self.api_client)
-            url_info = f'{updated_tinyurl.final_url};{updated_tinyurl.domain}'
+            queue_data = {'update': {'url': updated_tinyurl.tinyurl, 'domain': updated_tinyurl.domain}}
 
+            self.shared_queue.put(queue_data)
         except (TinyUrlUpdateError, RequestError, NetworkError) as e:
             raise e
 
     def delete_tinyurl(self, id):
         pass
 
+    @Spinner(text='Creating urls from list...', spinner_type='pulse_horizontal', color='cyan', delay=0.04)
     def create_from_list(self, urls: List[str]):
-        results = []
-        with ThreadPoolExecutor(max_workers=6) as executor:  # Adjust max_workers as needed
-            futures = [executor.submit(self.create_tinyurl, url) for url in urls]
+        next_available_id = self.get_next_available_id()
+        added_schema_urls = []
+
+        for url in urls:
+            if not urlparse(url).scheme:
+                url_with_schema = 'https://' + url
+            else:
+                url_with_schema = url
+            added_schema_urls.append(url_with_schema)
+
+        with ThreadPoolExecutor(max_workers=4) as executor:  # Adjust max_workers as needed
+            futures = [executor.submit(self.create_tinyurl, url, True, next_available_id + i) for i, url in enumerate(added_schema_urls)]
             wait(futures, return_when=ALL_COMPLETED)
+
         for future in as_completed(futures):
             try:
-                result = future.result()
-                results.append(result)  # Store the result in the list
-                for result in results:
-                    print(result.tinyurl)
-            except Exception as e:
-                pass  # Ignore exceptions
-
-            # Handle exceptions
-
-
-
-
+                tinyurl_obj = future.result()
+                self.id_tinyurl_mapping[tinyurl_obj.id] = tinyurl_obj
+            except Exception:
+                pass
 
     def print_all(self):
         for tinyurl in self.id_tinyurl_mapping.values():
             print(f'{yellow}{tinyurl}')
 
     def print_short(self):
-        for tinyurl in self.id_tinyurl_mapping.values():
+        for id, tinyurl in sorted(self.id_tinyurl_mapping.items()):
             if len(tinyurl.final_url) > 32:
-                extra_len = len(tinyurl.tinyurl.split('.')[-1])
-                extra_space = (5 - extra_len) * ' '
-                print(f'{yellow}{tinyurl.id}. {tinyurl.tinyurl}{extra_space}  -->  http://{tinyurl.domain}/...')
+                extra_space = (11 - len(tinyurl.alias)) * ' '
+                print(f'{yellow}{id}. {tinyurl.tinyurl}{extra_space}-->  http://{tinyurl.domain}/...')
             else:
-                extra_len = len(tinyurl.tinyurl.split('.')[-1])
-                extra_space = (5 - extra_len) * ' '
-                print(f'{yellow}{tinyurl.id}. {tinyurl.tinyurl}{extra_space}{extra_space}  -->  {tinyurl.final_url} ')
+                extra_space = (11 - len(tinyurl.alias)) * ' '
+                print(f'{yellow}{id}. {tinyurl.tinyurl}{extra_space}-->  {tinyurl.final_url} ')
 
     def print_tokens(self):
         for index, token in enumerate(self.auth_tokens):
             print(f'{white}{index + 1}. - {token}')
         print(f'\n{bwhite}Current token:\n{green}{self.api_client.auth_tokens[self.token_id - 1]}')
+
+    def process_updated_data(self, data: dict):
+        for key, data in data.items():
+            if key == 'patch':
+                for obj in self.id_tinyurl_mapping.values():
+                    if obj.alias == data['alias']:
+                         obj.final_url = data['target_url']
+                         obj.domain = data['domain']
+            else:
+                pass
 
     def synchronize_data(self):
         pass
@@ -329,26 +345,17 @@ class TinyUrlManager:
 
         return assigned_id
 
-    def purge_inactive_tinyurl(self, id_for_deletion):
-        process_to_terminate = self.id_process_mapping[id_for_deletion]
-        process_to_terminate.terminate()
-        process_to_terminate.join()
 
-        self.id_tinyurl_mapping.pop(id_for_deletion)
-
-        if id_for_deletion == self.selected_id:
-            self.selected_id = None
-
-        with self.lock:
-            self.shared_data.pop(id_for_deletion)
-            self.shared_data['delete_by_id'] = None
+def is_input_available():
+    rlist, _, _ = select.select([sys.stdin], [], [], 0)
+    return rlist
 
 
 def handle_invalid_input(input, specific: str = None):  # move
     print(f'{red}\nInvalid input: {reset}{input}')
     if specific:
         print(specific)
-    print(f"{white}Type 'help' to display options!\n")
+    print(f"{white}Type 'help' to display options!")
 
 
 def create_log_file():
@@ -378,16 +385,18 @@ def initialize_loggers():  # move
     temp_handler.setFormatter(color_formatter)
 
     logger.addHandler(temp_handler)
+    logger.addHandler(file_handler)
 
 
 @Spinner(text='Loading configuration...', spinner_type='pulse_spinner', color='cyan', delay=0.1)
-def initialize() -> TinyUrlManager:
+def initialize() -> Tuple[Thread, Thread]:
     initialize_loggers()
     shared_queue = Queue()
     tum = TinyUrlManager(shared_queue=shared_queue)
-    heartbeat = HeartbeatService(tum.api_client, shared_queue, ping_check_event)
-    t1 = threading.Thread(target=tum.run)
-    t2 = threading.Thread(target=heartbeat.run_heartbeat_service)
+    heartbeat = HeartbeatService(tum.api_client, shared_queue, update_event)
+    t1 = Thread(target=tum.start_cli)
+    t2 = Thread(target=heartbeat.run_heartbeat_service)
+    t2.daemon = True
     return t1, t2
 
 
@@ -396,3 +405,4 @@ if __name__ == '__main__':
     tum_thread.start()
     heartbeat_thread.start()
     tum_thread.join()
+

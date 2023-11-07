@@ -4,4 +4,4 @@ __all__ = ['red', 'bred', 'green', 'bgreen', 'yellow', 'byellow', 'blue', 'bblue
 from .ansi_colors import *
 from .url_tools import *
 from .network_tools import *
-from .spinner import Spinner
+from .spinner.spinner import Spinner,SpinnerManager
