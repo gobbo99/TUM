@@ -112,16 +112,15 @@ class HeartbeatService:
         if self.api_client.tunneling_service.tunneler:
             while attempts < self.api_client.tunneling_service.length:
                 try:
-                    logger.info(f'Attempting to update {[tinyurl]} redirect to {self.api_client.tunneling_service.tunneler}...')
+                    logger.log(SUCCESS, f'Attempting to update {tinyurl} redirect to {self.api_client.tunneling_service.tunneler}...')
                     data = self.api_client.update_tinyurl_redirect_service(alias, self.api_client.tunneling_service.tunneler, retry=1, timeout=1)
                     full_url = 'https://' + data['url'] if not urlparse(data['url']).scheme else data['url']
                     target_domain = get_final_domain(data['url'])
                     self.tinyurl_target_mapping[tinyurl] = target_domain
                     self.preview_errors.pop(tinyurl)
-                    logger.error('AAAAAAAAAAAAAA')
                     data: dict = {'patch': {'alias': alias, 'target_url': full_url, 'domain': target_domain}}
                     self._add_queue_data(data)
-                    logger.info(f'{tinyurl} redirect successfully updated from {target_url} to {tunneler}')
+                    logger.log(SUCCESS, f'{tinyurl} redirect successfully updated from {target_url} to {full_url}')
                     break
                 except (TinyUrlUpdateError, NetworkError,  RequestError, ValueError):
                     attempts += 1
@@ -132,6 +131,7 @@ class HeartbeatService:
     def _add_queue_data(self, data):
         self.shared_queue.put(data)
         self.update_event.set()
+
 
     def _process_queue_data(self, data: dict):
         for key, data in data.items():

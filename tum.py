@@ -66,8 +66,11 @@ class TinyUrlManager:
         self.create_from_list(settings.TUNNELING_SERVICE_URLS)
         run = True
         while run:
-            try:
+            if not update_event.is_set():
                 print(f'{bwhite}\n>{byellow} ', end='')
+            else:
+                update_event.clear()
+            try:
                 while not update_event.is_set():
                     if is_input_available():
                         user_input = input().strip()
@@ -79,7 +82,6 @@ class TinyUrlManager:
 
                 if update_event.is_set():
                     self.process_updated_data(self.shared_queue.get())
-                    update_event.clear()
 
             except InputException as e:
                 handle_invalid_input(e)
