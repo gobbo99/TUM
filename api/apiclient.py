@@ -14,8 +14,6 @@ from utility.url_tools import get_final_domain
 from tunneling.tunnelservicehandler import TunnelServiceHandler
 
 BASE_URL = "https://api.tinyurl.com"
-SUCCESS = 25
-logger = logging.getLogger('')
 
 
 class ApiClient:
@@ -104,12 +102,8 @@ class ApiClient:
                     retry -= 1
                 raise NetworkError('Connection error. Request timed out!')
             except RequestException as e:
-                if retry:
-                    retry -= 1
                 raise RequestError(e)
             except ValueError:
-                if retry:
-                    retry -= 1
                 raise NetworkError("Can't find ['data'] in response! Check Tinyurl docs")
 
     def update_tinyurl_redirect_user(self, alias: str, target_url: str, headers: dict = None):

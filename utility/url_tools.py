@@ -9,7 +9,7 @@ def generate_string_5_30(length=5):
     return random_string
 
 
-def check_format_vadility():
+def check_format_validity():
     pass
 
 

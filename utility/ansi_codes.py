@@ -15,6 +15,8 @@ red = "\033[0;31m"
 bred = "\033[1;31m"
 green = "\033[0;32m"
 bgreen = "\033[1;32m"
+ubgreen = "\033[4;32m"
+ugreen = "\033[4;32m"
 yellow = "\033[0;33m"
 byellow = "\033[1;33m"
 blue = "\033[0;34m"
@@ -46,6 +48,7 @@ success = f"{yellow}[{bgreen}√{yellow}]"
 error = f"{yellow}[{bred}X{yellow}]"
 info = f"{yellow}[{bred}\u2022{yellow}]"
 warning = f"{yellow}[{bwhite}!{yellow}]"
+marked = '\033[;100m\033[4;1;32m'
 
 cursor_up = '\x1b[1A'
 erase_line = '\x1b[2K'

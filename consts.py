@@ -21,6 +21,7 @@ ________________________________________________________________________________
 {bwhite}clear          - {yellow}Clear the screen
 {bwhite}help           - {yellow}Display this menu
 {bwhite}exit           - {yellow}Exit the program
+_______________________________________________________________________________________________
 """
 
 

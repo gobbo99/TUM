@@ -1,6 +1,6 @@
 from typing import Dict, List, Any, Tuple, Optional
 from threading import  Event
-from queue import Queue
+from queue import Queue, Empty
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait, ALL_COMPLETED
 from collections import OrderedDict
@@ -12,29 +12,28 @@ from exceptions.tinyurl_exceptions import TinyUrlCreationError, TinyUrlUpdateErr
     RequestError
 import settings
 
+PING_INTERVAL = settings.PING_INTERVAL
+AUTH_TOKENS = settings.AUTH_TOKENS
+TUNNELING_SERVICE_URLS = settings.TUNNELING_SERVICE_URLS
+
 
 class TinyUrlManager:
-    def __init__(self, shared_queue: Queue, update_event: Event, app_config: dict = None):
+    def __init__(self, shared_queue: Queue, control_event: Event, feedback_event: Event, app_config: dict = None,
+                 service: bool = True):
         self.selected_id: int = None
-        self.auth_tokens: [] = None  # identical to authclients
+        self.auth_tokens: [] = None
         self.id_tinyurl_mapping = OrderedDict()
         self.shared_queue = shared_queue
-        self.update_event = update_event
-        self.ping_interval = settings.PING_INTERVAL
+        self.batch: dict = {}
+        self.control_event = control_event
+        self.feedback_event = feedback_event
+        self.ping_interval = PING_INTERVAL
         if app_config:
-            data = {
-                'delay': app_config['delay'],
-            }
-            self.shared_queue.put_nowait(data)
             self.fallback_urls = get_valid_urls(app_config['fallback_urls'])
             self.auth_tokens = app_config['auth_tokens']
         else:
-            data = {
-                'delay': self.ping_interval,
-            }
-            self.shared_queue.put_nowait(data)
-            self.fallback_urls = get_valid_urls(settings.TUNNELING_SERVICE_URLS)
-            self.auth_tokens = settings.AUTH_TOKENS
+            self.fallback_urls = get_valid_urls(TUNNELING_SERVICE_URLS)
+            self.auth_tokens = AUTH_TOKENS
 
         self.api_client = ApiClient(self.auth_tokens, fallback_urls=self.fallback_urls)
         self.token_id = 1
@@ -47,8 +46,8 @@ class TinyUrlManager:
             new_tinyurl = TinyUrl(new_id)
             new_tinyurl.instantiate_tinyurl(url, self.api_client, no_check=no_check)
             self.id_tinyurl_mapping[new_tinyurl.id] = new_tinyurl
-            queue_data = {'new': {'url': new_tinyurl.tinyurl, 'domain': new_tinyurl.domain}}
-            self.shared_queue.put_nowait(queue_data)
+            queue_data = {new_tinyurl.tinyurl:  new_tinyurl.domain}  #  tinyurl.com:target_domain
+            self.enqueue(queue_data)
             return new_tinyurl
         except (TinyUrlCreationError, RequestError, NetworkError, ValueError) as e:
             raise e
@@ -58,9 +57,8 @@ class TinyUrlManager:
         try:
             updated_tinyurl: TinyUrl = self.id_tinyurl_mapping[self.selected_id]
             updated_tinyurl.update_redirect(url, self.api_client)
-            queue_data = {'update': {'url': updated_tinyurl.tinyurl, 'domain': updated_tinyurl.domain}}
-
-            self.shared_queue.put_nowait(queue_data)
+            queue_data = {updated_tinyurl.tinyurl:  updated_tinyurl.domain}  #  tinyurl.com:target_domain
+            self.enqueue(queue_data)
         except (TinyUrlUpdateError, RequestError, NetworkError) as e:
             raise e
 
@@ -108,15 +106,29 @@ class TinyUrlManager:
             print(f'{white}{index + 1}. - {token}')
         print(f'\n{bwhite}Current token:\n{green}{self.token_id}. - {self.api_client.auth_tokens[self.token_id - 1]}')
 
-    def process_updated_data(self, data: dict):
+    def process_updated_data(self):
+        try:
+            data = self.shared_queue.get()
+        except Empty:
+            raise Empty
         for key, data in data.items():
-            if key == 'patch':
-                for obj in self.id_tinyurl_mapping.values():
-                    if obj.alias == data['alias']:
-                         obj.final_url = data['target_url']
-                         obj.domain = data['domain']
-            else:
-                pass
+            for obj in self.id_tinyurl_mapping.values():
+                if key == obj.alias:
+                     obj.final_url = data['full_url']
+                     obj.domain = data['domain']
+
+    def enqueue(self, item: dict):
+        if not self.feedback_event.is_set():
+            try:
+                self.shared_queue.put(item)
+            except Exception as e:
+                for tinyurl, domain in item.items():
+                    self.batch[tinyurl] = domain
+                print(f'{e}debug, adding to batch, feedback event is on so we blockd bb')
+        else:
+            print(f'{item}debug, adding to batch, feedback event is on so we blockd bb')
+            for key, value in item.items():
+                self.batch[key] = value
 
     def get_next_available_id(self):
         if self.id_tinyurl_mapping.keys():
@@ -124,9 +136,5 @@ class TinyUrlManager:
             assigned_id = last_id + 1
         else:
             assigned_id = 1
-
         return assigned_id
-
-
-
 

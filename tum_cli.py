@@ -1,4 +1,3 @@
-import asyncio
 import datetime
 import logging
 import os
@@ -9,9 +8,11 @@ import sys
 import time
 import urllib
 from pathlib import Path
-from queue import Queue
 from threading import Thread, Event
 from typing import Tuple
+from queue import Queue, Empty
+
+import click
 
 import logconfig
 import settings
@@ -31,19 +32,20 @@ logger.setLevel(logging.INFO)
 
 
 class TumCLI(TinyUrlManager):
-    def __init__(self, shared_queue: Queue, update_event: Event):
-        super().__init__(shared_queue=shared_queue, update_event=update_event)
+    def __init__(self, shared_queue: Queue, control_event: Event, feedback_event: Event, service: bool = True):
+        super().__init__(shared_queue=shared_queue, control_event=control_event, feedback_event=feedback_event,
+                         service=service)
 
-    async def handle_user_input(self):
-        user_input = await asyncio.to_thread(input)  # Non-blocking input
-        user_input = re.split(r"\s+", user_input)
-        command = user_input[0]
-
+    def handle_user_input(self):
+        prompt = f'{bwhite}\n>{byellow} '
+        parsed_input = input(prompt)
+        parsed_input = re.split(r"\s+", parsed_input)
+        command = parsed_input[0]
         if command == 'new':
             try:
-                url = user_input[1]
+                url = parsed_input[1]
             except (IndexError, ValueError, AttributeError):
-                raise InputException(' '.join(user_input))
+                raise InputException(' '.join(parsed_input))
 
             url = f'https://{url}' if not urllib.parse.urlparse(url).scheme else url
             new_tinyurl = self.create_tinyurl(url)
@@ -55,7 +57,7 @@ class TumCLI(TinyUrlManager):
 
         elif command == 'select':
             try:
-                num = re.search(r'\d+', user_input[1])
+                num = re.search(r'\d+', parsed_input[1])
                 num = int(num.group())
                 if num not in self.id_tinyurl_mapping.keys():
                     print(f'{red}Tinyurl({num}) is invalid!')
@@ -66,20 +68,13 @@ class TumCLI(TinyUrlManager):
                     print(f'{green}Tinyurl({num}) selected!')
 
             except (IndexError, ValueError, AttributeError):
-                raise InputException(' '.join(user_input))
+                raise InputException(' '.join(parsed_input))
 
         elif command == 'delete' or command == 'del':
             try:
-                num = re.search(r'\d+', user_input[1])
+                num = re.search(r'\d+', parsed_input[1])
                 num = int(num.group())
                 if num in self.id_tinyurl_mapping.keys():
-                    process_to_terminate = self.id_process_mapping[num]
-                    process_to_terminate.terminate()
-                    process_to_terminate.join()
-                    self.id_process_mapping.pop(num)
-
-                    print(f'{bgreen}Tinyurl ({num}) deleted!')
-                    logger.info(f'Tinyurl ({num}) deleted!')
                     self.id_tinyurl_mapping.pop(num)
 
                     if self.selected_id == num:
@@ -90,10 +85,10 @@ class TumCLI(TinyUrlManager):
                     self.print_short()
 
             except (IndexError, ValueError, AttributeError):
-                raise InputException(' '.join(user_input))
+                raise InputException(' '.join(parsed_input))
 
         elif command == 'update':
-            url = user_input[1]
+            url = parsed_input[1]
 
             if not self.selected_id:
                 print(f'{red}TinyUrl not selected!')
@@ -127,7 +122,7 @@ class TumCLI(TinyUrlManager):
 
         elif command == 'token':
             try:
-                num = re.search(r'\d+', user_input[1])
+                num = re.search(r'\d+', parsed_input[1])
                 token_id = int(num.group())
                 if not self.auth_tokens[token_id - 1]:
                     print(f'{red}Token ({token_id}) is invalid!')
@@ -138,38 +133,49 @@ class TumCLI(TinyUrlManager):
                     self.api_client.token_index_selected = token_id - 1
                     print(f'{bwhite}Token changed to:\n{green}{self.auth_tokens[token_id - 1]}')
             except (IndexError, ValueError, AttributeError) as e:
-                raise InputException(' '.join(user_input))
+                raise InputException(' '.join(parsed_input))
 
         elif command == 'delay':
             try:
-                match = re.search(r'(\d+)(.*$)?', user_input[1])
+                match = re.search(r'(\d+)(.*$)?', parsed_input[1])
                 num, unit = match.groups()
                 num = int(num)
                 if unit in ['m', 'min', 'minutes']:
                     num = num * 60
                 if unit in ['h', 'hrs', 'hours']:
                     num = num * 3600
-                self.shared_queue.put_nowait({'delay': num})
-                self.update_event.set()
-                self.ping_interval = num
-                print(f'{green}Pinging interval changed to {num} seconds!')
+                if not self.control_event.is_set():
+                    with Spinner(text='Changing delay...', spinner_type='pulse_horizontal', color='cyan', delay=0.04):
+                        self.shared_queue.join()
+                        self.control_event.set()
+                        self.shared_queue.put({'delay': num})
+                        self.shared_queue.join()
+                        self.ping_interval = num
+                        print(f'\n{green}Pinging interval changed to {num} seconds!')
+                else:
+                    print(f'{red}Pinging interval not changed. Please try again! ')
             except (IndexError, ValueError, AttributeError):
                 specific = f'{white}Correct format: {byellow}[ delay <seconds> or delay <minutes>m]'
-                raise InputException(' '.join(user_input), specific)
+                raise InputException(' '.join(parsed_input), specific)
 
         elif command == 'ping':
-            with Spinner(text='Ping sweeping all urls...', spinner_type='bouncing_ball', color='bcyan', delay=0.05):
-                if not self.update_event.is_set():
-                    self.update_event.set()
-                    time.sleep(5)
+            with Spinner(text='Ping sweeping all urls...', spinner_type='pulse_horizontal', color='cyan', delay=0.04):
+                self.shared_queue.join()
+                if not self.control_event.is_set():
+                    self.control_event.set()
+                    self.shared_queue.join()
+                else:
+                    print(f'{red}Error. Control event is already set!')
 
         elif command == 'start':
-            self.shared_queue.put({'online': True})
-            self.update_event.is_set()
+            self.shared_queue.join()
+            self.control_event.is_set()
+            self.shared_queue.put({'active': True})
 
         elif command == 'stop':
-            self.shared_queue.put({'online': False})
-            self.update_event.is_set()
+            self.shared_queue.join()
+            self.control_event.is_set()
+            self.shared_queue.put({'active': False})
 
         elif command == 'help':
             print(menu)
@@ -185,44 +191,39 @@ class TumCLI(TinyUrlManager):
             os.system('clear')  # Unix
 
         else:
-            handle_invalid_input(' '.join(user_input))
-
+            handle_invalid_input(' '.join(parsed_input))
         return True
+
+    def listen_for_event(self):
+        while True:
+            self.feedback_event.wait()
+            try:
+                self.process_updated_data()
+                if self.batch:
+                    self.enqueue(self.batch)
+                self.shared_queue.task_done()
+            except Empty:
+                continue
 
     def start_listening(self):
         slow_print(f'{byellow}TUM[{settings.VERSION}] {cyan}\u2665{reset}', 0.04)
         slow_print('__________', 0.04)
         print(menu)
         keep_running = True
+        self.create_from_list(settings.TUNNELING_SERVICE_URLS)
         while keep_running:
-            if self.update_event.is_set():
-                self.update_event.clear()
-            while True:
-                if self.update_event.is_set():
-                    self.process_updated_data(self.shared_queue.get())
-                    break
-                try:
-                    print(f'{bwhite}\n>{byellow} ', end='')
-                    asyncio.run(self.handle_user_input())
-                except InputException as e:
-                    handle_invalid_input(e)
-                except TinyUrlCreationError as e:
-                    print(e)
-                except TinyUrlUpdateError as e:
-                    print(e)
-                except NetworkError as e:
-                    print(e)
-                except RequestError as e:
-                    print(e)
-                except KeyboardInterrupt:
-                    for process in self.id_process_mapping.values():
-                        process.terminate()
-                        process.join()
-                    sys.stdout.write(cursor_up + erase_line)
-                    print(f'\n{bwhite}Thank you for using TUM!{bred}\u2665\n{byellow}[TUM version 1.0]')
-                finally:
-                    if self.update_event.is_set():
-                        self.process_updated_data(self.shared_queue.get())
+            try:
+                self.shared_queue.join()
+                keep_running = self.handle_user_input()
+            except InputException as e:
+                handle_invalid_input(e)
+            except KeyboardInterrupt:
+                sys.stdout.write(cursor_up + erase_line)
+                print(f'\n{bwhite}Thank you for using TUM!{bred}\u2665\n{byellow}[TUM version 1.0]')
+            except (TinyUrlUpdateError, TinyUrlCreationError) as e:
+                print(e)
+            except Exception as e:
+                print(e)
 
 
 def handle_invalid_input(input, specific: str = None):  # move
@@ -242,9 +243,9 @@ def create_log_file():
     return final_path, log_dir / 'temp'
 
 
-def initialize_loggers():  # move
+def initialize_loggers(service: bool = True):
+    color_formatter = logconfig.ColoredFormatter()
     log_format = "%(custom_time)s - %(levelname)s - %(message)s"
-    color_formatter = logconfig.ColoredFormatter(log_format)
     debug_formatter = logconfig.DebugFormatter(log_format)
 
     #  File Handler
@@ -252,6 +253,10 @@ def initialize_loggers():  # move
     file_handler = logging.FileHandler(full_path)
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(debug_formatter)
+    logger.addHandler(file_handler)
+
+    if not service:
+        return
 
     #  Live feed handler
     temp_handler = logconfig.LiveFeedHandler(color_formatter, temp_file, settings.TERMINAL_EMULATOR)
@@ -259,23 +264,29 @@ def initialize_loggers():  # move
     temp_handler.setLevel(logging.INFO)
 
     logger.addHandler(temp_handler)
-    logger.addHandler(file_handler)
 
 
+@click.command()
+@click.option('--service/--no-service', default=True, required=False)
 @Spinner(text='Loading configuration...', spinner_type='pulse_spinner', color='cyan', delay=0.1)
-def initialize() -> Tuple[Thread, Thread]:
-    initialize_loggers()
+def initialize(service):
+    initialize_loggers(service)
     shared_queue = Queue()
-    update_event = Event()
-    tum_cli = TumCLI(shared_queue, update_event)
-    heartbeat = HeartbeatService(shared_queue, update_event, tum_cli.api_client)
+    control_event = Event()
+    feedback_event = Event()
+    tum_cli = TumCLI(shared_queue, control_event, feedback_event, service)
+    heartbeat = HeartbeatService(shared_queue, control_event, feedback_event, tum_cli.api_client)
+
     t1 = Thread(target=tum_cli.start_listening)
-    t2 = Thread(target=heartbeat.run_heartbeat_service, daemon=True)
-    return t1, t2
+    t2 = Thread(target=tum_cli.listen_for_event, daemon=True)
+    t3 = Thread(target=heartbeat.start_heartbeat_service, args=(service,), daemon=True)
+
+    return t1, t2, t3
 
 
 if __name__ == '__main__':
-    t1, t2 = initialize()
+    t1, t2, t3 = initialize(standalone_mode=False)
     t1.start()
     t2.start()
+    t3.start()
     t1.join()
