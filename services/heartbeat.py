@@ -89,7 +89,8 @@ class HeartbeatService:
         except ValueError as e:
             raise e
 
-    def _fix_redirects
+    def _fix_redirects(self):
+        pass
 
     def _ping_sweep(self):
         self.last_sweep = time.time()

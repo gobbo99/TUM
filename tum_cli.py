@@ -220,6 +220,7 @@ class TumCLI(TinyUrlManager):
             except KeyboardInterrupt:
                 sys.stdout.write(cursor_up + erase_line)
                 print(f'\n{bwhite}Thank you for using TUM!{bred}\u2665\n{byellow}[TUM version 1.0]')
+                break
             except (TinyUrlUpdateError, TinyUrlCreationError) as e:
                 print(e)
             except Exception as e:
@@ -268,8 +269,9 @@ def initialize_loggers(service: bool = True):
 
 @click.command()
 @click.option('--service/--no-service', default=True, required=False)
+@click.option('--daemon/--no-daemon', default=None, required=False)
 @Spinner(text='Loading configuration...', spinner_type='pulse_spinner', color='cyan', delay=0.1)
-def initialize(service):
+def initialize(service, daemon):
     initialize_loggers(service)
     shared_queue = Queue()
     control_event = Event()
@@ -277,9 +279,9 @@ def initialize(service):
     tum_cli = TumCLI(shared_queue, control_event, feedback_event, service)
     heartbeat = HeartbeatService(shared_queue, control_event, feedback_event, tum_cli.api_client)
 
-    t1 = Thread(target=tum_cli.start_listening)
+    t1 = Thread(target=tum_cli.start_listening, daemon=True)
     t2 = Thread(target=tum_cli.listen_for_event, daemon=True)
-    t3 = Thread(target=heartbeat.start_heartbeat_service, args=(service,), daemon=True)
+    t3 = Thread(target=heartbeat.start_heartbeat_service, args=(service,))
 
     return t1, t2, t3
 
@@ -290,3 +292,4 @@ if __name__ == '__main__':
     t2.start()
     t3.start()
     t1.join()
+
