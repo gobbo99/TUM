@@ -1,6 +1,6 @@
 from typing import Dict, List, Any, Tuple, Optional
 from threading import  Event
-from queue import Queue, Empty
+from queue import Queue, Empty, Full
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait, ALL_COMPLETED
 from collections import OrderedDict
@@ -18,8 +18,7 @@ TUNNELING_SERVICE_URLS = settings.TUNNELING_SERVICE_URLS
 
 
 class TinyUrlManager:
-    def __init__(self, shared_queue: Queue, control_event: Event, feedback_event: Event, app_config: dict = None,
-                 service: bool = True):
+    def __init__(self, shared_queue: Queue, control_event: Event, feedback_event: Event, app_config: dict = None):
         self.selected_id: int = None
         self.auth_tokens: [] = None
         self.id_tinyurl_mapping = OrderedDict()
@@ -46,8 +45,8 @@ class TinyUrlManager:
             new_tinyurl = TinyUrl(new_id)
             new_tinyurl.instantiate_tinyurl(url, self.api_client, no_check=no_check)
             self.id_tinyurl_mapping[new_tinyurl.id] = new_tinyurl
-            queue_data = {new_tinyurl.tinyurl:  new_tinyurl.domain}  #  tinyurl.com:target_domain
-            self.enqueue(queue_data)
+            queue_data = {'update': {new_tinyurl.tinyurl:  new_tinyurl.domain}}
+            self._enqueue(queue_data)
             return new_tinyurl
         except (TinyUrlCreationError, RequestError, NetworkError, ValueError) as e:
             raise e
@@ -57,8 +56,8 @@ class TinyUrlManager:
         try:
             updated_tinyurl: TinyUrl = self.id_tinyurl_mapping[self.selected_id]
             updated_tinyurl.update_redirect(url, self.api_client)
-            queue_data = {updated_tinyurl.tinyurl:  updated_tinyurl.domain}  #  tinyurl.com:target_domain
-            self.enqueue(queue_data)
+            queue_data = {'update': {updated_tinyurl.tinyurl:  updated_tinyurl.domain}}
+            self._enqueue(queue_data)
         except (TinyUrlUpdateError, RequestError, NetworkError) as e:
             raise e
 
@@ -77,9 +76,11 @@ class TinyUrlManager:
                 url_with_schema = url
             added_schema_urls.append(url_with_schema)
 
+        self.control_event.set()
         with ThreadPoolExecutor(max_workers=4) as executor:  # Adjust max_workers as needed
             futures = [executor.submit(self.create_tinyurl, url, True, next_available_id + i) for i, url in enumerate(added_schema_urls)]
             wait(futures, return_when=ALL_COMPLETED)
+        self.control_event.clear()
 
         for future in as_completed(futures):
             try:
@@ -109,26 +110,24 @@ class TinyUrlManager:
     def process_updated_data(self):
         try:
             data = self.shared_queue.get()
+            self.shared_queue.task_done()
         except Empty:
             raise Empty
         for key, data in data.items():
-            for obj in self.id_tinyurl_mapping.values():
-                if key == obj.alias:
-                     obj.final_url = data['full_url']
-                     obj.domain = data['domain']
+            for tinyurl in self.id_tinyurl_mapping.values():
+                if key == tinyurl.alias:
+                     tinyurl.final_url = data['full_url']
+                     tinyurl.domain = data['domain']
 
-    def enqueue(self, item: dict):
-        if not self.feedback_event.is_set():
-            try:
-                self.shared_queue.put(item)
-            except Exception as e:
-                for tinyurl, domain in item.items():
-                    self.batch[tinyurl] = domain
-                print(f'{e}debug, adding to batch, feedback event is on so we blockd bb')
-        else:
-            print(f'{item}debug, adding to batch, feedback event is on so we blockd bb')
-            for key, value in item.items():
-                self.batch[key] = value
+    def _enqueue(self, data: dict):
+        self.control_event.set()
+        try:
+            self.shared_queue.join()
+            self.shared_queue.put(data)
+        except Exception as e:
+            print(f'Exception in _enqueue: {e}')
+        except Full:
+            print(f'Exception queue full!: {e}')
 
     def get_next_available_id(self):
         if self.id_tinyurl_mapping.keys():

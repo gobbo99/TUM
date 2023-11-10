@@ -8,7 +8,7 @@ from utility.ansi_codes import success, error, warning, info
 
 def colorize_urls(text, color):
     # Regular expression pattern to match URLs
-    url_pattern = r'(https://\S+)'
+    url_pattern = r'(https?://\S+)'
     # Use re.sub to replace URLs with colorized versions
     return re.sub(url_pattern, f"{marked}\\1{color}", text)
 

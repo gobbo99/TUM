@@ -9,7 +9,7 @@ import time
 import urllib
 from pathlib import Path
 from threading import Thread, Event
-from typing import Tuple
+from typing import Tuple, List
 from queue import Queue, Empty
 
 import click
@@ -29,12 +29,13 @@ SUCCESS = 25
 logging.addLevelName(SUCCESS, 'SUCCESS')
 logger = logging.getLogger('')
 logger.setLevel(logging.INFO)
+service_threads = None
+service = None
 
 
 class TumCLI(TinyUrlManager):
-    def __init__(self, shared_queue: Queue, control_event: Event, feedback_event: Event, service: bool = True):
-        super().__init__(shared_queue=shared_queue, control_event=control_event, feedback_event=feedback_event,
-                         service=service)
+    def __init__(self, shared_queue: Queue, control_event: Event, feedback_event: Event):
+        super().__init__(shared_queue=shared_queue, control_event=control_event, feedback_event=feedback_event)
 
     def handle_user_input(self):
         prompt = f'{bwhite}\n>{byellow} '
@@ -144,16 +145,13 @@ class TumCLI(TinyUrlManager):
                     num = num * 60
                 if unit in ['h', 'hrs', 'hours']:
                     num = num * 3600
-                if not self.control_event.is_set():
-                    with Spinner(text='Changing delay...', spinner_type='pulse_horizontal', color='cyan', delay=0.04):
-                        self.shared_queue.join()
-                        self.control_event.set()
-                        self.shared_queue.put({'delay': num})
-                        self.shared_queue.join()
-                        self.ping_interval = num
-                        print(f'\n{green}Pinging interval changed to {num} seconds!')
-                else:
-                    print(f'{red}Pinging interval not changed. Please try again! ')
+                with Spinner(text='Changing delay...', spinner_type='pulse_horizontal', color='cyan', delay=0.04):
+                    self.shared_queue.join()
+                    self.control_event.set()
+                    self.shared_queue.put({'delay': num})
+                    self.shared_queue.join()
+                    self.ping_interval = num
+                    print(f'\n{green}Pinging interval changed to {num} seconds!')
             except (IndexError, ValueError, AttributeError):
                 specific = f'{white}Correct format: {byellow}[ delay <seconds> or delay <minutes>m]'
                 raise InputException(' '.join(parsed_input), specific)
@@ -161,21 +159,38 @@ class TumCLI(TinyUrlManager):
         elif command == 'ping':
             with Spinner(text='Ping sweeping all urls...', spinner_type='pulse_horizontal', color='cyan', delay=0.04):
                 self.shared_queue.join()
-                if not self.control_event.is_set():
-                    self.control_event.set()
-                    self.shared_queue.join()
+                self.control_event.set()
+                self.shared_queue.put({'ping': 0})
+                self.shared_queue.join()
+
+        elif command == 'stop':
+            with Spinner(text='Stopping pinging service...', spinner_type='pulse_horizontal', color='cyan', delay=0.04):
+                self.shared_queue.join()
+                self.control_event.set()
+                self.shared_queue.put({'exit': True})
+                global service_threads
+                service_threads = [t for t in service_threads if t.is_alive()]
+                if service_threads:
+                    print(service_threads[0].is_alive())
+                    print(service_threads[1].is_alive())
+                    print('Error!')
                 else:
-                    print(f'{red}Error. Control event is already set!')
+                    service_threads.clear()
 
         elif command == 'start':
             self.shared_queue.join()
             self.control_event.is_set()
-            self.shared_queue.put({'active': True})
-
-        elif command == 'stop':
-            self.shared_queue.join()
-            self.control_event.is_set()
-            self.shared_queue.put({'active': False})
+            tinyurl_target = {value: value.domain for value in self.id_tinyurl_mapping}
+            print('inserting these values:')
+            print('{0}  ->   {1}'.format(turl, domain) for turl, domain in tinyurl_target.values())
+            heartbeat = HeartbeatService(self.shared_queue, self.control_event, self.feedback_event
+                                         ,self.tum_cli.api_client, tinyurl_target_list=tinyurl_target)
+            t1 = Thread(target=heartbeat.start_heartbeat_service())
+            t2 = Thread(target=self.listen_for_event())
+            if service_threads:
+                print('Error! Threads already running.')
+            else:
+                service_threads = [t1, t2]
 
         elif command == 'help':
             print(menu)
@@ -194,18 +209,20 @@ class TumCLI(TinyUrlManager):
             handle_invalid_input(' '.join(parsed_input))
         return True
 
+    """
+    Thread that monitors and processes external data from servicd that runs as t3.
+    If feedback event is set  
+    """
     def listen_for_event(self):
         while True:
             self.feedback_event.wait()
-            try:
-                self.process_updated_data()
-                if self.batch:
-                    self.enqueue(self.batch)
-                self.shared_queue.task_done()
-            except Empty:
-                continue
+            while True:
+                try:
+                    self.process_updated_data()
+                except Empty:
+                    print('Error fetching service data!')
 
-    def start_listening(self):
+    def user_interface(self):
         slow_print(f'{byellow}TUM[{settings.VERSION}] {cyan}\u2665{reset}', 0.04)
         slow_print('__________', 0.04)
         print(menu)
@@ -244,7 +261,7 @@ def create_log_file():
     return final_path, log_dir / 'temp'
 
 
-def initialize_loggers(service: bool = True):
+def initialize_loggers():
     color_formatter = logconfig.ColoredFormatter()
     log_format = "%(custom_time)s - %(levelname)s - %(message)s"
     debug_formatter = logconfig.DebugFormatter(log_format)
@@ -256,11 +273,8 @@ def initialize_loggers(service: bool = True):
     file_handler.setFormatter(debug_formatter)
     logger.addHandler(file_handler)
 
-    if not service:
-        return
-
     #  Live feed handler
-    temp_handler = logconfig.LiveFeedHandler(color_formatter, temp_file, settings.TERMINAL_EMULATOR)
+    temp_handler = logconfig.LiveFeedHandler(color_formatter, temp_file)
     temp_handler.setFormatter(color_formatter)
     temp_handler.setLevel(logging.INFO)
 
@@ -270,26 +284,35 @@ def initialize_loggers(service: bool = True):
 @click.command()
 @click.option('--service/--no-service', default=True, required=False)
 @click.option('--daemon/--no-daemon', default=None, required=False)
-@Spinner(text='Loading configuration...', spinner_type='pulse_spinner', color='cyan', delay=0.1)
+@Spinner(text='Loading configuration...', spinner_type='pulse_horizontal_long', color='cyan', delay=0.03)
 def initialize(service, daemon):
-    initialize_loggers(service)
     shared_queue = Queue()
     control_event = Event()
     feedback_event = Event()
-    tum_cli = TumCLI(shared_queue, control_event, feedback_event, service)
+    tum_cli = TumCLI(shared_queue, control_event, feedback_event)
     heartbeat = HeartbeatService(shared_queue, control_event, feedback_event, tum_cli.api_client)
 
-    t1 = Thread(target=tum_cli.start_listening, daemon=True)
-    t2 = Thread(target=tum_cli.listen_for_event, daemon=True)
-    t3 = Thread(target=heartbeat.start_heartbeat_service, args=(service,))
+    t1 = Thread(target=tum_cli.user_interface)
 
-    return t1, t2, t3
+    if service:
+        consumer_thread = Thread(target=tum_cli.listen_for_event, daemon=True)
+        heartbeat_thread = Thread(target=heartbeat.start_heartbeat_service, daemon=True)  #  when listen service offline, have to batch
+        t2 = [consumer_thread, heartbeat_thread]
+    else:
+        t2 = []
+
+    global service_threads
+    service_threads = t2
+
+    return t1
 
 
 if __name__ == '__main__':
-    t1, t2, t3 = initialize(standalone_mode=False)
-    t1.start()
-    t2.start()
-    t3.start()
-    t1.join()
+    initialize_loggers()
+    user_thread = initialize(standalone_mode=False)
+    user_thread.start()
+    if service_threads:
+        service_threads[0].start()
+        service_threads[1].start()
+    user_thread.join()
 
