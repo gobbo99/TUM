@@ -4,7 +4,7 @@ from pathlib import Path
 from utility.file_manipulation import read_data_from_file
 
 home_dir = str(Path.home())
-VERSION = '1.0'
+VERSION = '2.0'
 
 try:
     config_file = configparser.ConfigParser(allow_no_value=True)
@@ -24,7 +24,7 @@ try:
     LOGGER = config_file['Options'].get('logger').strip() or 'no'
     LOGGER = False if LOGGER == 'no' else True
 
-    AUTH_TOKENS = read_data_from_file(TOKENS_PATH, TOKENS_SEPERATOR).copy()
+    AUTH_TOKENS = read_data_from_file(TOKENS_PATH, TOKENS_SEPERATOR)
     TUNNELING_SERVICE_URLS = read_data_from_file(FALLBACK_URLS_PATH, FALLBACK_URLS_SEPERATOR)
 
     if not LOGS_PATH or LOGS_PATH == '~':

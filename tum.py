@@ -1,17 +1,18 @@
 import time
-from typing import Dict, List, Any, Tuple, Optional
-from threading import  Event
-from queue import Queue, Empty, Full
-from urllib.parse import urlparse
-from concurrent.futures import ThreadPoolExecutor, as_completed, wait, ALL_COMPLETED
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, ALL_COMPLETED
+from queue import Queue, Empty, Full
+from threading import Event
+from typing import List
+from urllib.parse import urlparse
 
-from tinyurl import TinyUrl
-from api.apiclient import ApiClient
-from utility import *
-from exceptions.tinyurl_exceptions import TinyUrlCreationError, TinyUrlUpdateError, InputException, NetworkError, \
-    RequestError
 import settings
+from api.apiclient import ApiClient
+from exceptions.tinyurl_exceptions import TinyUrlCreationError, TinyUrlUpdateError, NetworkError, \
+    RequestError
+from tinyurl import TinyUrl
+from utility import get_valid_urls, AnsiCodes
+from spinner.spinner import Spinner
 
 PING_INTERVAL = settings.PING_INTERVAL
 AUTH_TOKENS = settings.AUTH_TOKENS
@@ -38,7 +39,7 @@ class TinyUrlManager:
         self.api_client = ApiClient(self.auth_tokens, fallback_urls=self.fallback_urls)
         self.token_id = 1
 
-    @Spinner(text='Sending request to create...', spinner_type='bouncing_ball', color='bcyan', delay=0.05)
+    @Spinner(text='Sending request to create...', spinner_type='bouncing_ball', color='bcyan', delay=0.08)
     def create_tinyurl(self, url: str, no_check: bool = False, new_id: int = None):
         if not new_id:
             new_id = self.get_next_available_id()
@@ -52,7 +53,7 @@ class TinyUrlManager:
         except (TinyUrlCreationError, RequestError, NetworkError, ValueError) as e:
             raise e
 
-    @Spinner(text='Sending request to update...', spinner_type='bouncing_ball', color='bcyan', delay=0.05)
+    @Spinner(text='Sending request to update...', spinner_type='bouncing_ball', color='bcyan', delay=0.08)
     def update_tinyurl(self, url: str):
         try:
             updated_tinyurl: TinyUrl = self.id_tinyurl_mapping[self.selected_id]
@@ -77,7 +78,7 @@ class TinyUrlManager:
                 url_with_schema = url
             added_schema_urls.append(url_with_schema)
 
-        with ThreadPoolExecutor(max_workers=4) as executor:  # Adjust max_workers as needed
+        with ThreadPoolExecutor(max_workers=4) as executor:
             futures = [executor.submit(self.create_tinyurl, url, True, next_available_id + i) for i, url in enumerate(added_schema_urls)]
             wait(futures, return_when=ALL_COMPLETED)
             if self.control_event.is_set():
@@ -92,21 +93,21 @@ class TinyUrlManager:
 
     def print_all(self):
         for tinyurl in self.id_tinyurl_mapping.values():
-            print(f'{yellow}{tinyurl}')
+            print(f'{AnsiCodes.YELLOW}{tinyurl}')
 
     def print_short(self):
         for id, tinyurl in sorted(self.id_tinyurl_mapping.items()):
             if len(tinyurl.final_url) > 32:
                 extra_space = (11 - len(tinyurl.alias)) * ' '
-                print(f'{yellow}{id}. {tinyurl.tinyurl}{extra_space}-->  http://{tinyurl.domain}/...')
+                print(f'{AnsiCodes.YELLOW}{id}. {tinyurl.tinyurl}{extra_space}-->  http://{tinyurl.domain}/...')
             else:
                 extra_space = (11 - len(tinyurl.alias)) * ' '
-                print(f'{yellow}{id}. {tinyurl.tinyurl}{extra_space}-->  {tinyurl.final_url} ')
+                print(f'{AnsiCodes.YELLOW}{id}. {tinyurl.tinyurl}{extra_space}-->  {tinyurl.final_url} ')
 
     def print_tokens(self):
         for index, token in enumerate(self.auth_tokens):
-            print(f'{white}{index + 1}. - {token}')
-        print(f'\n{bwhite}Current token:\n{green}{self.token_id}. - {self.api_client.auth_tokens[self.token_id - 1]}')
+            print(f'{AnsiCodes.WHITE}{index + 1}. - {token}')
+        print(f'\n{AnsiCodes.BWHITE}Current token:\n{AnsiCodes.GREEN}{self.token_id}. - {self.api_client.auth_tokens[self.token_id - 1]}')
 
     def process_item(self):
         try:
@@ -129,7 +130,7 @@ class TinyUrlManager:
         except Exception as e:
             print(f'Exception in _enqueue: {e}')
         except Full:
-            print(f'Exception queue full!: {e}')
+            print('Exception queue full!')
 
     def get_next_available_id(self):
         if self.id_tinyurl_mapping.keys():

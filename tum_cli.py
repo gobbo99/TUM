@@ -6,31 +6,29 @@ import re
 import subprocess
 import sys
 import time
-import urllib
-from urllib.parse import urlparse
+import logging
 from pathlib import Path
-from threading import Thread, Event
-from typing import Tuple, List
 from queue import Queue, Empty
+from threading import Thread, Event
+from urllib.parse import urlparse
 
 import click
 
 import logconfig
 import settings
-from utility.spinner import Spinner
 from consts import menu
 from exceptions.tinyurl_exceptions import TinyUrlCreationError, TinyUrlUpdateError, InputException
 from services.heartbeat import HeartbeatService
+from spinner import Spinner
 from tum import TinyUrlManager
-from utility.ansi_codes import green, red, cyan, byellow, yellow, white, bwhite, bred, reset, slow_print, \
-    cursor_up, erase_line
+from utility.ansi_codes import AnsiCodes, slow_print
 
 SUCCESS = 25
 logging.addLevelName(SUCCESS, 'SUCCESS')
 logger = logging.getLogger('live')
 logger.setLevel(logging.INFO)
 service_threads = []
-service = None
+service_active = None
 
 
 class TumCLI(TinyUrlManager):
@@ -38,7 +36,9 @@ class TumCLI(TinyUrlManager):
         super().__init__(shared_queue=shared_queue, control_event=control_event, feedback_event=feedback_event)
 
     def handle_user_input(self):
-        prompt = f"{bwhite}\n{byellow}[{self.selected_id or '/'}]{bwhite} >{white} "
+        global service_active
+        global service_threads
+        prompt = f"\n{AnsiCodes.BYELLOW}[{self.selected_id or 'X'}]{AnsiCodes.WHITE} >{AnsiCodes.WHITE} "
         user_input = input(prompt)
         parsed_input = re.split(r"\s+", user_input)
         command = parsed_input[0]
@@ -51,7 +51,7 @@ class TumCLI(TinyUrlManager):
             url = f'https://{url}' if not urlparse(url).scheme else url
             new_tinyurl = self.create_tinyurl(url)
 
-            print(f'{green}Tinyurl({new_tinyurl.id}) created!')
+            print(f'{AnsiCodes.GREEN}Tinyurl({new_tinyurl.id}) created!')
 
             self.id_tinyurl_mapping.update({new_tinyurl.id: new_tinyurl})
             self.selected_id = new_tinyurl.id
@@ -61,12 +61,12 @@ class TumCLI(TinyUrlManager):
                 num = re.search(r'\d+', parsed_input[1])
                 num = int(num.group())
                 if num not in self.id_tinyurl_mapping.keys():
-                    print(f'{red}Tinyurl({num}) is invalid!')
-                    print(f'{yellow}Available tinyurls:\n')
+                    print(f'{AnsiCodes.RED}Tinyurl({num}) is invalid!')
+                    print(f'{AnsiCodes.YELLOW}Available tinyurls:\n')
                     self.print_short()
                 else:
                     self.selected_id = num
-                    print(f'{green}Tinyurl({num}) selected!')
+                    print(f'{AnsiCodes.GREEN}Tinyurl({num}) selected!')
 
             except (IndexError, ValueError, AttributeError):
                 raise InputException(' '.join(parsed_input))
@@ -79,10 +79,10 @@ class TumCLI(TinyUrlManager):
                     self.control_event.set()
                     self.shared_queue.put({'delete': self.id_tinyurl_mapping[num].tinyurl})
                     self.id_tinyurl_mapping.pop(num)
-                    print(f'{red}Tinyurl ({num}) deleted from the system!')
-                    self.selected_id = None if self.selected_id == num else None
+                    print(f'{AnsiCodes.GREEN}Tinyurl ({num}) deleted from the system!')
+                    self.selected_id = None if self.selected_id == num else self.selected_id
                 else:
-                    print(f"{green}Tinyurl({num}) is invalid!\n")
+                    print(f"{AnsiCodes.GREEN}Tinyurl({num}) is invalid!\n")
                     self.print_short()
 
             except (IndexError, ValueError, AttributeError):
@@ -92,30 +92,30 @@ class TumCLI(TinyUrlManager):
             url = parsed_input[1]
 
             if not self.selected_id:
-                print(f'{red}TinyUrl not selected!')
+                print(f'{AnsiCodes.RED}TinyUrl not selected!')
                 self.print_short()
                 return True
 
             url = f'https://{url}' if not urlparse(url).scheme else url
 
             self.update_tinyurl(url)
-            print(f'{green}Tinyurl({self.selected_id}) updated!')
+            print(f'{AnsiCodes.GREEN}Tinyurl({self.selected_id}) updated!')
 
         elif command == 'current':
             if not self.selected_id:
-                print(f'{red}No tinyurl is selected!')
+                print(f'{AnsiCodes.RED}No tinyurl is selected!')
             else:
                 selected_tinyurl = self.id_tinyurl_mapping[self.selected_id]
                 print(selected_tinyurl)
 
         elif command == 'info':
             self.print_all()
-            print(f'{green}_______________________')
+            print(f'{AnsiCodes.GREEN}_______________________')
             print(f"Pinging interval is {self.ping_interval} seconds")
 
         elif command == 'list' or command == 'l':
             self.print_short()
-            print(f'{green}_______________________')
+            print(f'{AnsiCodes.GREEN}_______________________')
             print(f"Pinging interval is {self.ping_interval} seconds")
 
         elif command == 'tokens':
@@ -126,70 +126,89 @@ class TumCLI(TinyUrlManager):
                 num = re.search(r'\d+', parsed_input[1])
                 token_id = int(num.group())
                 if not self.auth_tokens[token_id - 1]:
-                    print(f'{red}Token ({token_id}) is invalid!')
-                    print(f'{byellow}Available tokens:')
+                    print(f'{AnsiCodes.RED}Token ({token_id}) is invalid!')
+                    print(f'{AnsiCodes.BYELLOW}Available tokens:')
                     self.print_tokens()
                 else:
                     self.token_id = token_id
-                    self.api_client.token_index_selected = token_id - 1
-                    print(f'{bwhite}Token changed to:\n{green}{self.auth_tokens[token_id - 1]}')
-            except (IndexError, ValueError, AttributeError) as e:
+                    self.api_client.switch_auth_token(token_id)
+                    print(f'{AnsiCodes.WHITE}Token changed to:\n{token_id}. - {AnsiCodes.GREEN}'
+                          f'{self.auth_tokens[token_id - 1]}')
+            except (IndexError, ValueError, AttributeError):
                 raise InputException(' '.join(parsed_input))
 
         elif command == 'delay':
-            try:
-                match = re.search(r'(\d+)(.*$)?', parsed_input[1])
-                num, unit = match.groups()
-                num = int(num)
-                if unit in ['m', 'min', 'minutes']:
-                    num = num * 60
-                if unit in ['h', 'hrs', 'hours']:
-                    num = num * 3600
-                with Spinner(text='Changing delay...', spinner_type='pulse_horizontal', color='cyan', delay=0.04):
-                    self.control_event.set()
-                    self.shared_queue.put({'delay': num})
-                self.ping_interval = num
-                print(f'{green}Pinging interval changed to {num} seconds!')
-            except (IndexError, ValueError, AttributeError):
-                specific = f'{white}Correct format: {byellow}[ delay <seconds> or delay <minutes>m]'
-                raise InputException(' '.join(parsed_input), specific)
+            if service_active:
+                try:
+                    match = re.search(r'(\d+)(.*$)?', parsed_input[1])
+                    num, unit = match.groups()
+                    num = int(num)
+                    if unit in ['m', 'min', 'minutes']:
+                        num = num * 60
+                    if unit in ['h', 'hrs', 'hours']:
+                        num = num * 3600
+                    with Spinner(text='Changing delay...', spinner_type='pulse_horizontal', color='cyan', delay=0.04):
+                        self.control_event.set()
+                        self.shared_queue.put({'delay': num})
+                    self.ping_interval = num
+                    print(f'{AnsiCodes.GREEN}Pinging interval changed to {num} seconds!')
+                except (IndexError, ValueError, AttributeError):
+                    specific = f'{AnsiCodes.WHITE}Correct format: {AnsiCodes.BYELLOW}[ delay <seconds> or delay <minutes>m]'
+                    raise InputException(' '.join(parsed_input), specific)
+            else:
+                print(f'{AnsiCodes.BRED}Service inactive!')
 
         elif command == 'ping':
-            with Spinner(text='Ping sweeping all urls...', spinner_type='pulse_horizontal', color='cyan', delay=0.04):
-                self.control_event.set()
-                self.shared_queue.put({'ping': 0})
-                time.sleep(2)
+            if service_active:
+                with Spinner(text='Ping sweeping all urls...', spinner_type='bouncing_ball', color='cyan', delay=0.08):
+                    self.control_event.set()
+                    self.shared_queue.put({'ping': 0})
+                    time.sleep(2)
+            else:
+                print(f'{AnsiCodes.BRED}Service inactive!')
 
         elif command == 'stop':
-            global service_threads
-            with Spinner(text='Stopping pinging service...', spinner_type='pulse_horizontal', color='cyan', delay=0.04):
-                self.control_event.set()
-                self.shared_queue.put({'exit': True})
-                self.shared_queue.join()
-            service_threads.clear()
-            print(f'{green}Heartbeat service stopped!')
+            if service_active:
+                with Spinner(text='Stopping pinging service...', spinner_type='exit_spinner', color='cyan', delay=0.04):
+                    self.control_event.set()
+                    self.shared_queue.put({'exit': True})
+                    self.shared_queue.join()
+                    time.sleep(1)
+                print(f'{AnsiCodes.GREEN}Heartbeat service stopped!')
+                service_active = False
+            else:
+                print(f'{AnsiCodes.BRED}Service inactive!')
 
         elif command == 'start':
-            tinyurl_target = {tinyurl.tinyurl: tinyurl.domain for tinyurl in self.id_tinyurl_mapping.values()}
-            heartbeat = HeartbeatService(self.shared_queue, self.control_event, self.feedback_event, self.api_client,
-                                         tinyurl_target_list=tinyurl_target)
-            t1 = Thread(target=heartbeat.start_heartbeat_service, daemon=True)
-            t2 = Thread(target=self.listen_for_event, daemon=True)
-            t1.start()
-            t2.start()
-            service_threads = [t1, t2]
+            if not service_active:
+                with Spinner(text='Starting pinging service...', spinner_type='exit_spinner', color='cyan', delay=0.04):
+                    tinyurl_target = {tinyurl.tinyurl: tinyurl.domain for tinyurl in self.id_tinyurl_mapping.values()}
+                    heartbeat = HeartbeatService(self.shared_queue, self.control_event, self.feedback_event, self.api_client,
+                                                 tinyurl_target_list=tinyurl_target)
+                    t1 = Thread(target=heartbeat.start_heartbeat_service, daemon=True)
+                    t2 = Thread(target=self.listen_for_event, daemon=True)
+                    t1.start()
+                    t2.start()
+                    service_threads = [t1, t2]
+                    service_active = True
+                    time.sleep(1)
+                print(f'{AnsiCodes.GREEN}Heartbeat service started!')
+            else:
+                print(f'{AnsiCodes.BRED}Service already running!')
 
         elif command == 'help':
             print(menu)
 
         elif command == 'exit':
-            exit_text = f"Thank you for using TUM!\n[TUM version 1.1]".encode('utf-8')
+            exit_text = f"Thank you for using TUM!\u2665\n[TUM version {settings.VERSION}]".encode('utf-8')
             animations = ['waves', 'decrypt', 'blackhole', 'burn']
             command = f'tte {random.choice(animations)}'
             subprocess.run(command, input=exit_text, shell=True)
-            self.control_event.set()
-            self.shared_queue.put({'exit': True})
-            self.shared_queue.join()
+            if service_active:
+                self.control_event.set()
+                self.shared_queue.put({'exit': True})
+                self.shared_queue.join()
+                time.sleep(1)
             return False
 
         elif command == 'clear' or command == 'cls':
@@ -214,13 +233,14 @@ class TumCLI(TinyUrlManager):
                 self.feedback_event.clear()
 
     def user_interface(self):
-        slow_print(f'{byellow}TUM[{settings.VERSION}] {cyan}\u2665{reset}', 0.04)
+        slow_print(f'{AnsiCodes.BYELLOW}TUM[{settings.VERSION}] {AnsiCodes.CYAN}\u2665{AnsiCodes.RESET}', 0.04)
         slow_print('__________', 0.04)
         print(menu, end='')
         keep_running = True
         while keep_running:
             try:
-                self.shared_queue.join()
+                if service_active:
+                    self.shared_queue.join()
                 keep_running = self.handle_user_input()
             except InputException as e:
                 handle_invalid_input(e)
@@ -232,19 +252,22 @@ class TumCLI(TinyUrlManager):
             except Exception as e:
                 print(e)
 
+    @Spinner(text='Shutting down...', spinner_type='exit_spinner', color='cyan', delay=0.03)
     def handle_keyboard_interrupt(self):
-        sys.stdout.write(cursor_up + erase_line)
-        print(f'\n{bwhite}Thank you for using TUM!{bred}\u2665\n{byellow}[TUM version 1.0]')
-        self.control_event.set()
-        self.shared_queue.put({'exit': True})
-        self.shared_queue.join()
+        sys.stdout.write(AnsiCodes.move_cursor_up(1) + AnsiCodes.erase_line())
+        print(f'\n{AnsiCodes.BWHITE}Thank you for using TUM!{AnsiCodes.CYAN}\u2665\n{AnsiCodes.BYELLOW}[TUM version {settings.VERSION}]')
+        if service_active:
+            self.control_event.set()
+            self.shared_queue.put({'exit': True})
+            self.shared_queue.join()
+        time.sleep(1)  # Still needs time to process shutdown
 
 
 def handle_invalid_input(input, specific: str = None):  # move
-    print(f'{red}\nInvalid input: {reset}{input}')
+    print(f'{AnsiCodes.RED}\nInvalid input: {AnsiCodes.RESET}{input}')
     if specific:
         print(specific)
-    print(f"{white}Type 'help' to display options!")
+    print(f"{AnsiCodes.WHITE}Type 'help' to display options!")
 
 
 def create_log_file():
@@ -294,27 +317,31 @@ def initialize_file_logger(path):
 @click.option('--service/--no-service', default=True, required=False)
 @Spinner(text='Loading configuration...', spinner_type='pulse_horizontal_long', color='cyan', delay=0.03)
 def initialize(service):
+    global service_active
+    global service_threads
+    service_active = service
     shared_queue = Queue()
     control_event = Event()
     feedback_event = Event()
-    tum_cli = TumCLI(shared_queue, control_event, feedback_event)
-    heartbeat = HeartbeatService(shared_queue, control_event, feedback_event, tum_cli.api_client)
+    tum = TumCLI(shared_queue, control_event, feedback_event)
+    heartbeat = HeartbeatService(shared_queue, control_event, feedback_event, tum.api_client)
 
     if service:
-        t1 = Thread(target=tum_cli.listen_for_event, daemon=True)
+        t1 = Thread(target=tum.listen_for_event, daemon=True)
         t2 = Thread(target=heartbeat.start_heartbeat_service, daemon=True)
-        service_threads = [t1, t2]
+        t1.start()
+        t2.start()
     else:
         service_threads = []
 
-    t1.start()
-    t2.start()
-
-    return tum_cli, service_threads
+    return tum
 
 
 if __name__ == '__main__':
     initialize_loggers()
-    tum_cli, service_threads = initialize(standalone_mode=False)
-    tum_cli.user_interface()
-    service_threads[1].join()  #  wait and join non-daemon thread
+    tum_cli = initialize(standalone_mode=False)
+    try:
+        tum_cli.user_interface()
+    except KeyboardInterrupt:
+        tum_cli.handle_keyboard_interrupt()
+        #  green, yellow

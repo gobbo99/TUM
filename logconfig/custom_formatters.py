@@ -1,50 +1,39 @@
 import logging
-from datetime import datetime
 import re
-from utility.ansi_codes import marked
+from datetime import datetime
 
-from utility.ansi_codes import success, error, warning, info
+from utility.ansi_codes import AnsiCodes, SUCCESS, ERROR, WARNING, INFO, MARKED
 
 
 def colorize_urls(text, color):
     url_pattern = r'(https?://[^\s\'"]+)'
-    return re.sub(url_pattern, f"{marked}\\1{color}", text)
+    return re.sub(url_pattern, f"{MARKED}\\1{color}", text)
 
 
 class ColoredFormatter(logging.Formatter):
     def __init__(self):
         super().__init__("\033[0m%(custom_time)s %(message)s")
 
-    # Define color codes
-    WHITE = "\033[1;37m"
-    BRIGHT_RED = "\033[1;31m"
-    YELLOW = "\033[0;33m"
-    GREEN = "\033[0;32m"
-    BRIGHT_YELLOW = "\033[1;33m"
-    CYAN = "\033[0;36m"
-    RESET = "\033[0m"
-
     def format(self, record):
-        # Set the appropriate color based on the log level
         if record.levelno == logging.ERROR:
-            color_code = error + ' ' + self.BRIGHT_RED
-            color = self.BRIGHT_RED
+            color_code = ERROR + ' ' + AnsiCodes.BRED
+            color = AnsiCodes.BRED
         elif record.levelno == logging.getLevelName('SUCCESS'):
-            color_code = success + ' ' + self.GREEN
-            color = self.BRIGHT_RED + self.GREEN
+            color_code = SUCCESS + ' ' + AnsiCodes.GREEN
+            color = AnsiCodes.GREEN
         elif record.levelno == logging.INFO:
-            color_code = info + ' ' + self.YELLOW
-            color = self.BRIGHT_RED + self.YELLOW
+            color_code = INFO + ' ' + AnsiCodes.YELLOW
+            color = AnsiCodes.YELLOW
         elif record.levelno == logging.WARNING:
-            color_code = warning + ' ' + self.YELLOW
-            color = self.BRIGHT_YELLOW
+            color_code = WARNING + ' ' + AnsiCodes.CYAN
+            color = AnsiCodes.CYAN
         else:
-            color_code = info + ' ' + self.YELLOW
-            color = self.YELLOW
+            color_code = INFO + ' ' + AnsiCodes.YELLOW
+            color = AnsiCodes.YELLOW
 
         record.custom_time = datetime.now().strftime('%H:%M')
-        # Add color codes to the log message
-        record.msg = colorize_urls(f"{color_code}{record.msg}{self.RESET}", color)
+
+        record.msg = colorize_urls(f"{color_code}{record.msg}{AnsiCodes.RESET}", color)
         return super().format(record)
 
 

@@ -1,25 +1,24 @@
 import concurrent.futures
 import os
-import signal
-from concurrent.futures import wait, ALL_COMPLETED, FIRST_COMPLETED
 import random
-from subprocess import Popen
-import logging
-import atexit
-from threading import Event, Thread
-from queue import Queue, Empty, Full
+import signal
 import time
+import logging
+from concurrent.futures import wait, ALL_COMPLETED
+from queue import Queue, Empty, Full
+from subprocess import Popen
+from threading import Event, Thread
 from urllib.parse import urlparse
-from typing import Optional
 
 import requests
 from requests.exceptions import RequestException, HTTPError, Timeout
 
-import utility
-from api.apiclient import ApiClient
-from utility.url_tools import get_final_domain
-from exceptions.tinyurl_exceptions import *
 import settings
+from api.apiclient import ApiClient
+from exceptions.tinyurl_exceptions import *
+from utility import package_installer
+from utility.url_tools import get_final_domain
+from utility import AnsiCodes
 
 SUCCESS = 25
 logger = logging.getLogger('live')
@@ -44,6 +43,7 @@ class HeartbeatService:
         self.terminate = False
 
     def _consumer_thread(self):
+        self.terminate = False
         while True:
             self.control_event.wait()
             try:
@@ -107,7 +107,7 @@ class HeartbeatService:
             logger.info(f'Timeout 60 seconds, not all tasks completed!')
 
         if not self.errors and not self.preview_errors:
-            logger.log(SUCCESS, f"{green}All redirects point to the right domain!")
+            logger.log(SUCCESS, f"{AnsiCodes.GREEN}All redirects point to the right domain!")
         else:
             if self.errors:
                 logger.warning(f'Tinyurls with errors: {self.errors.keys()}')
@@ -227,18 +227,18 @@ class HeartbeatService:
         terminal = settings.TERMINAL_EMULATOR
         path = settings.LOGS_PATH + '/.tum_logs/temp'
         if terminal == 'gnome':
-            utility.package_installer.install_gnome_terminal()
+            package_installer.install_gnome_terminal()
             self.process = Popen(['gnome-terminal', '--disable-factory', '--', 'tail', '-f', f'{path}'],
                                  preexec_fn=os.setpgrp)
         else:
-            utility.package_installer.install_xfce4_terminal()
+            package_installer.install_xfce4_terminal()
             self.process = Popen(['xfce4-terminal', '--disable-server', '--execute', 'tail', '-f', f'{path}'],
                                  preexec_fn=os.setpgrp)
         self.pid = self.process.pid
         time.sleep(1)
 
     def start_heartbeat_service(self):
-        consumer_thread = Thread(target=self._consumer_thread)
+        consumer_thread = Thread(target=self._consumer_thread, daemon=True)
         heartbeat_thread = Thread(target=self.run_heartbeat_service, daemon=True)
         self._start_terminal_logger()
         logger.info('Live logger turned on!')

@@ -1,17 +1,15 @@
 import json
 import time
-from typing import Optional, Callable, List, Dict, Tuple
+from typing import Optional, Callable, List, Dict
 from urllib.parse import urlparse
 
 import requests
 from requests.exceptions import *
 from urllib3.exceptions import LocationParseError
 
-from utility.url_tools import generate_string_5_30
-from utility import green, red, bgreen, bred, byellow, yellow
 from exceptions.tinyurl_exceptions import *
-from utility.url_tools import get_final_domain
 from tunneling.tunnelservicehandler import TunnelServiceHandler
+from utility.url_tools import generate_string_5_30
 
 BASE_URL = "https://api.tinyurl.com"
 

@@ -1,7 +1,3 @@
-import logging
-from utility.ansi_codes import *
-
-
 class TinyUrlPreviewException(Exception):
     def __init__(self, id, url):
         self.message = f'Preview page is blocking Tinyurl({id}) for {url}!'

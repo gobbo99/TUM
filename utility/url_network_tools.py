@@ -1,5 +1,6 @@
-import requests
 from urllib.parse import urlparse
+
+import requests
 
 
 def is_resource_available(url):

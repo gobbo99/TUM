@@ -1,8 +1,4 @@
-import os
 import logging
-import signal
-from subprocess import Popen
-import utility.package_installer
 
 
 class LiveFeedHandler(logging.FileHandler):
