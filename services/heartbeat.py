@@ -4,6 +4,7 @@ import signal
 from concurrent.futures import wait, ALL_COMPLETED, FIRST_COMPLETED
 import random
 from subprocess import Popen
+import logging
 import atexit
 from threading import Event, Thread
 from queue import Queue, Empty, Full
@@ -21,7 +22,7 @@ from exceptions.tinyurl_exceptions import *
 import settings
 
 SUCCESS = 25
-logger = logging.getLogger('')
+logger = logging.getLogger('live')
 MAX_THREADS = settings.MAX_THREADS
 INTERVAL = settings.PING_INTERVAL
 
@@ -45,11 +46,11 @@ class HeartbeatService:
     def _consumer_thread(self):
         while True:
             self.control_event.wait()
-            self.control_event.clear()  # Immediately clear event, in case new stuff comes
             try:
-                self._consume_all()
+                self._get_next_item()
+                self.control_event.clear()
             except Exception:
-                pass
+                print('Exception consumer heatbeat')
             if self.terminate:
                 break
 
@@ -58,16 +59,16 @@ class HeartbeatService:
         Initial loop is a sleeper that only checks for control event
         :return:
         """
+        self.feedback_event.clear()
         while True:
-            while time.time() - self.last_sweep < self.delay:
+            while time.time() - self.last_sweep < float(self.delay):
                 time.sleep(1)
-                logger.info(f'Time before ping sweep: {-(time.time() - self.last_sweep - self.delay):2.2f} seconds')
 
             self._ping_sweep_thread_pool()  # Here errors are assigned if any
             self._fix_errors_thread_pool()
 
-            self._enqueue_data() if self.queue_data else None
-            logger.debug('DEBUG: _add_batch_to_queue function call returned!')
+            if self.queue_data:
+                self._enqueue_data()
 
     def ping_check(self, tinyurl, verbose=False):
         try:
@@ -79,11 +80,11 @@ class HeartbeatService:
             response_domain = get_final_domain(response.url)
             intended_domain = self.tinyurl_target_mapping[tinyurl]
 
-            if 'tinyurl.com' in response_domain:
-                self.preview_errors[tinyurl] = intended_domain
+            if 'tinyurl' in response_domain.split('.'):
+                self.preview_errors[tinyurl] = 'https://' + intended_domain \
+                    if not urlparse(intended_domain).scheme else intended_domain
             elif response_domain != intended_domain:
-                self.errors[tinyurl] = (f"Redirect mismatch: Expected domain: {intended_domain}"
-                                        f", got {response_domain}")
+                self.errors[tinyurl] = 'https://' + intended_domain if not urlparse(intended_domain).scheme else intended_domain
             else:
                 return True
 
@@ -96,9 +97,6 @@ class HeartbeatService:
         except ValueError as e:
             raise e
 
-    def _fix_redirects(self):
-        pass
-
     def _ping_sweep_thread_pool(self):
         futures = [self.executor.submit(self.ping_check, url, False) for url in self.tinyurl_target_mapping.keys()]
         _, not_completed = wait(futures, return_when=ALL_COMPLETED, timeout=60)
@@ -109,7 +107,10 @@ class HeartbeatService:
         if not self.errors and not self.preview_errors:
             logger.log(SUCCESS, f"{green}All redirects point to the right domain!")
         else:
-            logger.warning(f"Tinyurls with errors: {self.preview_errors or ''}{self.errors or ''}")
+            if self.errors:
+                logger.warning(f'Tinyurls with errors: {self.errors.keys()}')
+            elif self.preview_errors:
+                logger.warning(f'Tinyurls with errors: {self.preview_errors.keys()}')
 
     def _fix_errors_thread_pool(self):
         error_urls = {}  # url: True/False,  True to skip self-update to fix preview
@@ -118,13 +119,12 @@ class HeartbeatService:
         for url_fix in self.preview_errors:
             error_urls[url_fix] = False
         if error_urls:
-            futures = [self.executor.submit(self.fix_tinyurl_redirect, url, flag) for url, flag in error_urls.items()]
+            futures = [self.executor.submit(self.fix_tinyurl_redirect, url, flag,) for url, flag in error_urls.items()]
             _, not_completed = wait(futures, return_when=ALL_COMPLETED, timeout=60)
             if not_completed:
                 logger.debug(f'Not all tasks completed for fix_tinyurl_redirect!!!')
             else:
                 logger.debug('DEBUG: all futures for preview fix completed!')
-            logger.info('DEBUG: now calling _add_batch_to_queue and queueing data to main thread')
 
     def fix_tinyurl_redirect(self, tinyurl, flag=False):
         """
@@ -147,8 +147,7 @@ class HeartbeatService:
                     self.preview_errors.pop(tinyurl, None)
                     self.errors.pop(tinyurl, None)
             except (TinyUrlUpdateError, NetworkError, HTTPError, RequestError, ValueError) as e:
-                logger.debug(f'Unable to self-update! {tinyurl}!\nError: {e}')
-            logger.info(f'Unable to self-update to {target_url} | {tinyurl}!')
+                pass
         attempts = 0
         if self.api_client.tunneling_service.tunneler:
             while attempts < self.api_client.tunneling_service.length:
@@ -181,33 +180,39 @@ class HeartbeatService:
             except Empty:
                 break
 
-    def _enqueue_data(self):
+    def _get_next_item(self):
         try:
+            item = self.shared_queue.get()
+            self._process_data(item)
+            self.shared_queue.task_done()
+        except Empty:
+            pass
+
+    def _enqueue_data(self):
+        while self.control_event.is_set():
+            time.sleep(0.1)
+        try:
+            self.shared_queue.join()
             self.shared_queue.put(self.queue_data)
             self.feedback_event.set()
-            self.feedback_event.clear()
+            self.shared_queue.join()
+            self.queue_data.clear()
         except Full:
             print('Error, queue full!')
-        self.shared_queue.join()
-        self.queue_data.clear()
 
     def _process_data(self, data):
         for key, value in data.items():
             if key == 'update':
                 self.tinyurl_target_mapping.update(value)
             elif key == 'delay':
-                self.control_event.clear()
                 self.delay = value
-                logger.info(f'Pinging interval changed to: {self.delay}')
+                logger.info(f'Pinging interval changed to: {self.delay} seconds!')
             elif key == 'threads':
-                self.control_event.clear()
                 self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=value)
             elif key == 'exit':
-                self.control_event.clear()
                 self.terminate = True
             elif key == 'ping':
-                self.control_event.clear()
-                self._ping_sweep_thread_pool()
+                self.last_sweep = time.time() - 10000
             else:
                 logger.error(f'Unknown data received in queue!{data}')
 
@@ -238,9 +243,10 @@ class HeartbeatService:
         time.sleep(1)
 
     def start_heartbeat_service(self):
-        consumer_thread = Thread(target=self._consumer_thread, daemon=True)
+        consumer_thread = Thread(target=self._consumer_thread)
         heartbeat_thread = Thread(target=self.run_heartbeat_service, daemon=True)
         self._start_terminal_logger()
+        logger.info('Live logger turned on!')
         logger.info(f'Ping interval is set to {self.delay} seconds!')
         logger.info(f'Using {MAX_THREADS} threads for this service!')
         consumer_thread.start()

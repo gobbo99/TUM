@@ -48,7 +48,7 @@ success = f"{yellow}[{bgreen}√{yellow}]"
 error = f"{yellow}[{bred}X{yellow}]"
 info = f"{yellow}[{bred}\u2022{yellow}]"
 warning = f"{yellow}[{bwhite}!{yellow}]"
-marked = '\033[;100m\033[4;1;32m'
+marked = '\033[4;40;93m'
 
 cursor_up = '\x1b[1A'
 erase_line = '\x1b[2K'

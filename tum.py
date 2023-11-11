@@ -1,3 +1,4 @@
+import time
 from typing import Dict, List, Any, Tuple, Optional
 from threading import  Event
 from queue import Queue, Empty, Full
@@ -76,11 +77,11 @@ class TinyUrlManager:
                 url_with_schema = url
             added_schema_urls.append(url_with_schema)
 
-        self.control_event.set()
         with ThreadPoolExecutor(max_workers=4) as executor:  # Adjust max_workers as needed
             futures = [executor.submit(self.create_tinyurl, url, True, next_available_id + i) for i, url in enumerate(added_schema_urls)]
             wait(futures, return_when=ALL_COMPLETED)
-        self.control_event.clear()
+            if self.control_event.is_set():
+                self.control_event.clear()
 
         for future in as_completed(futures):
             try:
@@ -107,7 +108,7 @@ class TinyUrlManager:
             print(f'{white}{index + 1}. - {token}')
         print(f'\n{bwhite}Current token:\n{green}{self.token_id}. - {self.api_client.auth_tokens[self.token_id - 1]}')
 
-    def process_updated_data(self):
+    def process_item(self):
         try:
             data = self.shared_queue.get()
             self.shared_queue.task_done()
@@ -120,9 +121,10 @@ class TinyUrlManager:
                      tinyurl.domain = data['domain']
 
     def _enqueue(self, data: dict):
-        self.control_event.set()
+        while self.feedback_event.is_set():
+            time.sleep(0.2)
         try:
-            self.shared_queue.join()
+            self.control_event.set()
             self.shared_queue.put(data)
         except Exception as e:
             print(f'Exception in _enqueue: {e}')

@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 from utility import *
 from api.apiclient import ApiClient
 
-logger = logging.getLogger('')
+logger = logging.getLogger('live')
 SUCCESS = 25
 
 

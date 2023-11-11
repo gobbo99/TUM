@@ -7,9 +7,7 @@ from utility.ansi_codes import success, error, warning, info
 
 
 def colorize_urls(text, color):
-    # Regular expression pattern to match URLs
-    url_pattern = r'(https?://\S+)'
-    # Use re.sub to replace URLs with colorized versions
+    url_pattern = r'(https?://[^\s\'"]+)'
     return re.sub(url_pattern, f"{marked}\\1{color}", text)
 
 
@@ -38,7 +36,7 @@ class ColoredFormatter(logging.Formatter):
             color_code = info + ' ' + self.YELLOW
             color = self.BRIGHT_RED + self.YELLOW
         elif record.levelno == logging.WARNING:
-            color_code = warning + ' ' + self.BRIGHT_YELLOW
+            color_code = warning + ' ' + self.YELLOW
             color = self.BRIGHT_YELLOW
         else:
             color_code = info + ' ' + self.YELLOW
