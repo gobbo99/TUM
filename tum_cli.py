@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 import urllib
+from urllib.parse import urlparse
 from pathlib import Path
 from threading import Thread, Event
 from typing import Tuple, List
@@ -18,11 +19,10 @@ import logconfig
 import settings
 from utility.spinner import Spinner
 from consts import menu
-from exceptions.tinyurl_exceptions import TinyUrlCreationError, TinyUrlUpdateError, RequestError, NetworkError, \
-    InputException
+from exceptions.tinyurl_exceptions import TinyUrlCreationError, TinyUrlUpdateError, InputException
 from services.heartbeat import HeartbeatService
 from tum import TinyUrlManager
-from utility.ansi_codes import green, red, cyan, byellow, bgreen, yellow, white, bwhite, bred, reset, slow_print, \
+from utility.ansi_codes import green, red, cyan, byellow, yellow, white, bwhite, bred, reset, slow_print, \
     cursor_up, erase_line
 
 SUCCESS = 25
@@ -37,10 +37,10 @@ class TumCLI(TinyUrlManager):
     def __init__(self, shared_queue: Queue, control_event: Event, feedback_event: Event):
         super().__init__(shared_queue=shared_queue, control_event=control_event, feedback_event=feedback_event)
 
-    def handle_user_input(self, threads):
-        prompt = f'{bwhite}\n>{byellow} '
-        parsed_input = input(prompt)
-        parsed_input = re.split(r"\s+", parsed_input)
+    def handle_user_input(self):
+        prompt = f"{bwhite}\n{byellow}[{self.selected_id or '/'}]{bwhite} >{white} "
+        user_input = input(prompt)
+        parsed_input = re.split(r"\s+", user_input)
         command = parsed_input[0]
         if command == 'new':
             try:
@@ -48,7 +48,7 @@ class TumCLI(TinyUrlManager):
             except (IndexError, ValueError, AttributeError):
                 raise InputException(' '.join(parsed_input))
 
-            url = f'https://{url}' if not urllib.parse.urlparse(url).scheme else url
+            url = f'https://{url}' if not urlparse(url).scheme else url
             new_tinyurl = self.create_tinyurl(url)
 
             print(f'{green}Tinyurl({new_tinyurl.id}) created!')
@@ -76,13 +76,13 @@ class TumCLI(TinyUrlManager):
                 num = re.search(r'\d+', parsed_input[1])
                 num = int(num.group())
                 if num in self.id_tinyurl_mapping.keys():
+                    self.control_event.set()
+                    self.shared_queue.put({'delete': self.id_tinyurl_mapping[num].tinyurl})
                     self.id_tinyurl_mapping.pop(num)
-
-                    if self.selected_id == num:
-                        print(f'{byellow}Tinyurl ({num}) unselected!')
-                        self.selected_id = None
+                    print(f'{red}Tinyurl ({num}) deleted from the system!')
+                    self.selected_id = None if self.selected_id == num else None
                 else:
-                    print(f"{red}Tinyurl({num}) is invalid!\n")
+                    print(f"{green}Tinyurl({num}) is invalid!\n")
                     self.print_short()
 
             except (IndexError, ValueError, AttributeError):
@@ -96,7 +96,7 @@ class TumCLI(TinyUrlManager):
                 self.print_short()
                 return True
 
-            url = f'https://{url}' if not urllib.parse.urlparse(url).scheme else url
+            url = f'https://{url}' if not urlparse(url).scheme else url
 
             self.update_tinyurl(url)
             print(f'{green}Tinyurl({self.selected_id}) updated!')
@@ -146,10 +146,8 @@ class TumCLI(TinyUrlManager):
                 if unit in ['h', 'hrs', 'hours']:
                     num = num * 3600
                 with Spinner(text='Changing delay...', spinner_type='pulse_horizontal', color='cyan', delay=0.04):
-                    self.shared_queue.join()
                     self.control_event.set()
                     self.shared_queue.put({'delay': num})
-                    self.shared_queue.join()
                 self.ping_interval = num
                 print(f'{green}Pinging interval changed to {num} seconds!')
             except (IndexError, ValueError, AttributeError):
@@ -158,30 +156,28 @@ class TumCLI(TinyUrlManager):
 
         elif command == 'ping':
             with Spinner(text='Ping sweeping all urls...', spinner_type='pulse_horizontal', color='cyan', delay=0.04):
-                self.shared_queue.join()
                 self.control_event.set()
                 self.shared_queue.put({'ping': 0})
-                self.shared_queue.join()
                 time.sleep(2)
 
         elif command == 'stop':
+            global service_threads
             with Spinner(text='Stopping pinging service...', spinner_type='pulse_horizontal', color='cyan', delay=0.04):
-                self.shared_queue.join()
                 self.control_event.set()
                 self.shared_queue.put({'exit': True})
-                time.sleep(2)
-            threads.clear()
+                self.shared_queue.join()
+            service_threads.clear()
             print(f'{green}Heartbeat service stopped!')
 
         elif command == 'start':
             tinyurl_target = {tinyurl.tinyurl: tinyurl.domain for tinyurl in self.id_tinyurl_mapping.values()}
             heartbeat = HeartbeatService(self.shared_queue, self.control_event, self.feedback_event, self.api_client,
                                          tinyurl_target_list=tinyurl_target)
-            t1 = Thread(target=heartbeat.start_heartbeat_service(), daemon=True)
-            t2 = Thread(target=self.listen_for_event(), daemon=True)
-            global service_threads
+            t1 = Thread(target=heartbeat.start_heartbeat_service, daemon=True)
+            t2 = Thread(target=self.listen_for_event, daemon=True)
+            t1.start()
+            t2.start()
             service_threads = [t1, t2]
-            return True
 
         elif command == 'help':
             print(menu)
@@ -191,6 +187,9 @@ class TumCLI(TinyUrlManager):
             animations = ['waves', 'decrypt', 'blackhole', 'burn']
             command = f'tte {random.choice(animations)}'
             subprocess.run(command, input=exit_text, shell=True)
+            self.control_event.set()
+            self.shared_queue.put({'exit': True})
+            self.shared_queue.join()
             return False
 
         elif command == 'clear' or command == 'cls':
@@ -214,25 +213,31 @@ class TumCLI(TinyUrlManager):
             finally:
                 self.feedback_event.clear()
 
-    def user_interface(self, service_threads):
+    def user_interface(self):
         slow_print(f'{byellow}TUM[{settings.VERSION}] {cyan}\u2665{reset}', 0.04)
         slow_print('__________', 0.04)
-        print(menu)
+        print(menu, end='')
         keep_running = True
         while keep_running:
             try:
                 self.shared_queue.join()
-                keep_running = self.handle_user_input(service_threads)
+                keep_running = self.handle_user_input()
             except InputException as e:
                 handle_invalid_input(e)
             except KeyboardInterrupt:
-                sys.stdout.write(cursor_up + erase_line)
-                print(f'\n{bwhite}Thank you for using TUM!{bred}\u2665\n{byellow}[TUM version 1.0]')
+                self.handle_keyboard_interrupt()
                 break
             except (TinyUrlUpdateError, TinyUrlCreationError) as e:
                 print(e)
             except Exception as e:
                 print(e)
+
+    def handle_keyboard_interrupt(self):
+        sys.stdout.write(cursor_up + erase_line)
+        print(f'\n{bwhite}Thank you for using TUM!{bred}\u2665\n{byellow}[TUM version 1.0]')
+        self.control_event.set()
+        self.shared_queue.put({'exit': True})
+        self.shared_queue.join()
 
 
 def handle_invalid_input(input, specific: str = None):  # move
@@ -305,13 +310,11 @@ def initialize(service):
     t1.start()
     t2.start()
 
-    main_thread = Thread(target=tum_cli.user_interface, args=(service_threads,))
-
-    return main_thread, service_threads
+    return tum_cli, service_threads
 
 
 if __name__ == '__main__':
     initialize_loggers()
-    user_thread, service_threads = initialize(standalone_mode=False)
-    user_thread.start()
-    user_thread.join()
+    tum_cli, service_threads = initialize(standalone_mode=False)
+    tum_cli.user_interface()
+    service_threads[1].join()  #  wait and join non-daemon thread

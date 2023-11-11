@@ -146,7 +146,7 @@ class ApiClient:
     @staticmethod
     def check_target_url(url: str):
         try:
-            response = requests.head(url, timeout=5)
+            response = requests.head(url, timeout=3)
             if urlparse(response.url).netloc == urlparse(url).netloc:
                 return
             response.raise_for_status()

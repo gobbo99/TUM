@@ -59,8 +59,10 @@ class HeartbeatService:
         Initial loop is a sleeper that only checks for control event
         :return:
         """
-        self.feedback_event.clear()
         while True:
+            while not self.tinyurl_target_mapping:
+                time.sleep(1)
+
             while time.time() - self.last_sweep < float(self.delay):
                 time.sleep(1)
 
@@ -204,6 +206,8 @@ class HeartbeatService:
         for key, value in data.items():
             if key == 'update':
                 self.tinyurl_target_mapping.update(value)
+            elif key == 'delete':
+                self.tinyurl_target_mapping.pop(value)
             elif key == 'delay':
                 self.delay = value
                 logger.info(f'Pinging interval changed to: {self.delay} seconds!')
@@ -215,15 +219,6 @@ class HeartbeatService:
                 self.last_sweep = time.time() - 10000
             else:
                 logger.error(f'Unknown data received in queue!{data}')
-
-    """
-    def _store_update_data(self, data):
-        if len(data) != 1:
-            logging.error(f'Error, store_update_data received unknown data: {data}')
-            print(f'Error, store_update_data received unknown data: {data}')
-        for tinyurl, domain in data.items():
-            self.to_be_processed[tinyurl] = domain
-    """
 
     def load_list(self, tinyurl_target: dict):
         self.tinyurl_target_mapping.update(tinyurl_target)
