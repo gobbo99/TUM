@@ -306,7 +306,6 @@ def create_log_file():
 
 def initialize_loggers():
     use_logger = settings.LOGGER
-
     logs_path = Path(settings.LOGS_PATH)
     log_dir = logs_path / '.tum_logs'
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -341,6 +340,7 @@ def initialize_file_logger(path):
 @click.option('--service/--no-service', default=True, required=False)
 @Spinner(text='Loading configuration...', spinner_type='pulse_horizontal_long', color='cyan', delay=0.03)
 def initialize(service):
+    time.sleep(1)
     global service_active
     global service_threads
     service_active = service

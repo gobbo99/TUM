@@ -1,3 +1,4 @@
+import functools
 import sys
 import threading
 import time
@@ -35,10 +36,18 @@ class Spinner:
                 yield frame
 
     def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        def wrapper(*args, **kwargs) -> Any:
-            with self:
-                return func(*args, **kwargs)
-
+        if self.special:
+            @functools.wraps(func)
+            def wrapper(instance, *args, **kwargs) -> Any:
+                if instance.use_spinner:
+                    return func(instance, *args, **kwargs)
+                else:
+                    with self:
+                        return func(*args, **kwargs)
+        else:
+            def wrapper(*args, **kwargs) -> Any:
+                with self:
+                    return func(*args, **kwargs)
         return wrapper
 
     def __enter__(self):
@@ -64,6 +73,7 @@ class Spinner:
         color = kwargs.get('color')
         frames = spinner_frames.get(kwargs.get('spinner_type'))
         self.spinner_frames = colorize_frames(color, frames)
+        self.special = kwargs.get('special') or False
 
         delay = kwargs.get('delay')
         if delay and float(delay):

@@ -17,13 +17,12 @@ BASE_URL = "https://api.tinyurl.com"
 class ApiClient:
     def __init__(self, auth_tokens: [], fallback_urls=None):
         self.auth_tokens: List[str] = auth_tokens
-        self.token_index_selected: int = 0
+        self.token_selected = self.auth_tokens[0]
         self.alias_token_mapping: Dict[int, str] = {}
         self.tunneling_service: TunnelServiceHandler = TunnelServiceHandler(fallback_urls)
 
     def create_tinyurl(self, target_url: str, expires_at: str = None, no_check: bool = False):
-        token_index = self.token_index_selected
-        headers = self.build_headers(token=self.auth_tokens[token_index])
+        headers = self.build_headers(token=self.token_selected)
         request_url = f'{BASE_URL}/create'
         if not no_check:
             self.check_target_url(target_url)
@@ -39,7 +38,7 @@ class ApiClient:
                 response = requests.post(url=request_url, headers=headers, data=json.dumps(payload), timeout=3)
                 response.raise_for_status()
                 data = response.json()['data']
-                self.alias_token_mapping[data['alias']] = self.auth_tokens[self.token_index_selected]
+                self.alias_token_mapping[data['alias']] = self.token_selected
                 return data
             except HTTPError as e:
                 if response.json()['errors']:
@@ -138,8 +137,16 @@ class ApiClient:
             except ValueError:
                 raise NetworkError("Can't find ['data'] in response! Check Tinyurl docs")
 
+    #  Used in tum cli
     def switch_auth_token(self, token_id):
-        self.token_index_selected = token_id
+        self.token_selected = self.auth_tokens[token_id - 1]
+
+    #   For api usage
+    def cycle_next_token(self):
+        current_index = self.auth_tokens.index(self.token_selected)
+        new_index = (current_index + 1) if current_index != len(self.auth_tokens) else 0
+        self.token_selected = self.auth_tokens[new_index]
+        return self.token_selected
 
     @staticmethod
     def check_target_url(url: str):

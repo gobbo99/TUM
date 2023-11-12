@@ -4,7 +4,7 @@ class TunnelServiceHandler:
         self.urls: [] = urls
         if not self.urls:
             self.urls_mapping = {}
-            self.tunneler = ''
+            self.tunneler = None
             return
         else:
             self.length = len(self.urls)
@@ -12,12 +12,16 @@ class TunnelServiceHandler:
         self.tunneler: str = self.set_tunneling_service()
 
     def set_tunneling_service(self):
+        if not self.urls:
+            return
         for url, used in self.urls_mapping.items():
             if not used:
                 return url
         self.reset_cycle()
 
     def cycle_next(self):
+        if not self.urls:
+            return
         self.urls_mapping[self.tunneler] = True
         return self.set_tunneling_service()
 

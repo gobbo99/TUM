@@ -19,3 +19,6 @@ class TinyUrlAPI(ABC):
     def make_from_list(self, urls: List[str]):
         pass
 
+    @abstractmethod
+    def self_check(self, timeout=60):
+        pass

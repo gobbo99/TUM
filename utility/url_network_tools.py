@@ -1,4 +1,5 @@
 from urllib.parse import urlparse
+from exceptions.tinyurl_exceptions import UnwantedDomain
 
 import requests
 from requests.exceptions import *
@@ -30,14 +31,20 @@ def get_valid_urls(urls):
     return valid_urls
 
 
-def check_redirect_url(url, target_url):
+def check_redirect_url(url, target_url, raise_exc=False):
     try:
         response = requests.head(url, timeout=5, allow_redirects=True)
         response_domain = get_final_domain(response.url)
-        target_domain = get_final_domain(target_url)
+        target_domain = target_url
         if response_domain == target_domain:
             return url
+        else:
+            if raise_exc:
+                raise UnwantedDomain(response_domain)
+            return
     except (HTTPError, Timeout, RequestException, ConnectionError):
+        if raise_exc:
+            raise UnwantedDomain(url)
         return
 
 

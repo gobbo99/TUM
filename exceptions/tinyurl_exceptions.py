@@ -58,3 +58,21 @@ class NetworkError(Exception):
     def __str__(self):
         return self.message
 
+
+class UnwantedDomain(Exception):
+    def __init__(self, domain):
+        self.message = f"Invalid target domain: {domain}"
+        super().__init__(self.message)
+
+    def __str__(self):
+        return self.message
+
+
+class NetworkException(Exception):
+    def __init__(self, message):
+        self.message = f'{message}'
+        super().__init__(self.message)
+
+    def __str__(self):
+        return self.message
+
