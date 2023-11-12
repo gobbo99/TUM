@@ -15,29 +15,36 @@ from requests.exceptions import RequestException, HTTPError, Timeout
 
 import settings
 from api.apiclient import ApiClient
-from exceptions.tinyurl_exceptions import *
 from utility import package_installer
 from utility.url_tools import get_final_domain
-from utility import AnsiCodes
+from utility.ansi_codes import AnsiCodes
+from exceptions.tinyurl_exceptions import TinyUrlUpdateError, NetworkError, RequestError
 
 SUCCESS = 25
-logger = logging.getLogger('live')
+logger = logging.getLogger('')
 MAX_THREADS = settings.MAX_THREADS
-INTERVAL = settings.PING_INTERVAL
 
 
 class HeartbeatService:
     def __init__(self, shared_queue: Queue, control_event: Event, feedback_event: Event,
-                 api_client: ApiClient = None, tinyurl_target_list: dict = {}):
+                 api_client: ApiClient = None, load_data: dict = None):
         self.control_event = control_event
         self.feedback_event = feedback_event
         self.shared_queue = shared_queue
+        self.delay = settings.PING_INTERVAL
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_THREADS)
         self.queue_data = {}
         self.last_sweep = time.time()
         self.api_client = api_client
-        self.delay = INTERVAL
-        self.tinyurl_target_mapping = tinyurl_target_list
+        self.tinyurl_target_mapping = {}
+        self.tinyurl_id_mapping = {}
+        if load_data:
+            self.tinyurl_target_mapping.update({key: value for _, nested_dict in load_data.items()
+                                                for key, value in nested_dict.items()})
+            self.tinyurl_id_mapping.update({url: inner_key for inner_key, nested_dict in load_data.items()
+                                            for url in nested_dict})
+            logger.warning(self.tinyurl_target_mapping.items())
+            logger.warning(self.tinyurl_id_mapping.items())
         self.errors = {}
         self.preview_errors = {}
         self.terminate = False
@@ -93,26 +100,29 @@ class HeartbeatService:
         except HTTPError as e:
             self.errors[tinyurl] = f"HTTP Error: {e}"
         except Timeout:
-            self.errors[tinyurl] = f"Request timed out!"
+            self.errors[tinyurl] = "Request timed out!"
         except RequestException as e:
             self.errors[tinyurl] = f"Request Exception: {e}"
         except ValueError as e:
             raise e
 
     def _ping_sweep_thread_pool(self):
-        futures = [self.executor.submit(self.ping_check, url, False) for url in self.tinyurl_target_mapping.keys()]
-        _, not_completed = wait(futures, return_when=ALL_COMPLETED, timeout=60)
+        futures = [self.executor.submit(self.ping_check, url, False) for url in self.tinyurl_target_mapping]
+        wait(futures, return_when=ALL_COMPLETED, timeout=60)
         self.last_sweep = time.time()
-        if not_completed:
-            logger.info(f'Timeout 60 seconds, not all tasks completed!')
 
         if not self.errors and not self.preview_errors:
             logger.log(SUCCESS, f"{AnsiCodes.GREEN}All redirects point to the right domain!")
         else:
+            error_ids = []
             if self.errors:
-                logger.warning(f'Tinyurls with errors: {self.errors.keys()}')
-            elif self.preview_errors:
-                logger.warning(f'Tinyurls with errors: {self.preview_errors.keys()}')
+                error_urls = [url for url in self.errors]
+                error_ids.extend(id for id in [self.tinyurl_id_mapping[url] for url in error_urls])
+            if self.preview_errors:
+                error_urls = [url for url in self.preview_errors]
+                error_ids.extend(id for id in [self.tinyurl_id_mapping[url] for url in error_urls])
+                error_ids = ','.join(['[' + str(id) + ']' for id in error_ids])
+                logger.warning(f"Tinyurls with errors: {error_ids}")
 
     def _fix_errors_thread_pool(self):
         error_urls = {}  # url: True/False,  True to skip self-update to fix preview
@@ -122,11 +132,7 @@ class HeartbeatService:
             error_urls[url_fix] = False
         if error_urls:
             futures = [self.executor.submit(self.fix_tinyurl_redirect, url, flag,) for url, flag in error_urls.items()]
-            _, not_completed = wait(futures, return_when=ALL_COMPLETED, timeout=60)
-            if not_completed:
-                logger.debug(f'Not all tasks completed for fix_tinyurl_redirect!!!')
-            else:
-                logger.debug('DEBUG: all futures for preview fix completed!')
+            wait(futures, return_when=ALL_COMPLETED, timeout=60)
 
     def fix_tinyurl_redirect(self, tinyurl, flag=False):
         """
@@ -138,7 +144,7 @@ class HeartbeatService:
         :return:
         """
 
-        logger.info(f'Fixing tinyurl {tinyurl}...')
+        logger.info(f'Fixing Tinyurl [{self.tinyurl_id_mapping[tinyurl]}]...')
         alias = tinyurl.split('/')[-1]
         target_url = self.tinyurl_target_mapping[tinyurl]
         if not flag:
@@ -148,13 +154,13 @@ class HeartbeatService:
                 if self.ping_check(tinyurl):
                     self.preview_errors.pop(tinyurl, None)
                     self.errors.pop(tinyurl, None)
-            except (TinyUrlUpdateError, NetworkError, HTTPError, RequestError, ValueError) as e:
+            except (TinyUrlUpdateError, NetworkError, HTTPError, RequestError, ValueError):
                 pass
         attempts = 0
         if self.api_client.tunneling_service.tunneler:
             while attempts < self.api_client.tunneling_service.length:
                 try:
-                    logger.log(SUCCESS, f'Attempting to update {tinyurl} redirect to'
+                    logger.debug(f'Attempting to update {tinyurl} redirect to'
                                         f' {self.api_client.tunneling_service.tunneler}...')
                     data = self.api_client.update_tinyurl_redirect_service(alias,
                                                                            self.api_client.tunneling_service.tunneler,
@@ -164,7 +170,8 @@ class HeartbeatService:
                     self.tinyurl_target_mapping[tinyurl] = target_domain
                     self.preview_errors.pop(tinyurl, None)
                     self.errors.pop(tinyurl, None)
-                    logger.log(SUCCESS, f'{tinyurl} redirect successfully updated from {target_url} to {full_url}')
+                    logger.log(SUCCESS, f'Tinyurl [{self.tinyurl_id_mapping[tinyurl]}] '
+                                        f'updated to new redirect domain: https://{target_domain}')
                     self.queue_data[alias] = {'domain': target_domain, 'full_url': full_url}
                     break
                 except (TinyUrlUpdateError, NetworkError, RequestError, ValueError) as e:
@@ -205,9 +212,11 @@ class HeartbeatService:
     def _process_data(self, data):
         for key, value in data.items():
             if key == 'update':
-                self.tinyurl_target_mapping.update(value)
+                self.tinyurl_target_mapping.update({value['tinyurl']: value['domain']})
+                self.tinyurl_id_mapping[value['tinyurl']] = value['id']
             elif key == 'delete':
                 self.tinyurl_target_mapping.pop(value)
+                self.tinyurl_id_mapping.pop(value)
             elif key == 'delay':
                 self.delay = value
                 logger.info(f'Pinging interval changed to: {self.delay} seconds!')
@@ -218,7 +227,7 @@ class HeartbeatService:
             elif key == 'ping':
                 self.last_sweep = time.time() - 10000
             else:
-                logger.error(f'Unknown data received in queue!{data}')
+                logger.error(f'Error! Unknown data received in queue!{data}')
 
     def load_list(self, tinyurl_target: dict):
         self.tinyurl_target_mapping.update(tinyurl_target)
@@ -241,9 +250,8 @@ class HeartbeatService:
         consumer_thread = Thread(target=self._consumer_thread, daemon=True)
         heartbeat_thread = Thread(target=self.run_heartbeat_service, daemon=True)
         self._start_terminal_logger()
-        logger.info('Live logger turned on!')
+        logger.info('\033[?25lLive logger turned on!')
         logger.info(f'Ping interval is set to {self.delay} seconds!')
-        logger.info(f'Using {MAX_THREADS} threads for this service!')
         consumer_thread.start()
         heartbeat_thread.start()
         consumer_thread.join()
@@ -252,5 +260,5 @@ class HeartbeatService:
     @staticmethod
     def kill_terminal_process(pid):
         logger.info('Live logger turned off! Shutting down...')
-        time.sleep(0.5)
+        time.sleep(1)
         os.killpg(pid, signal.SIGINT)

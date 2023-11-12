@@ -30,6 +30,5 @@ try:
     if not LOGS_PATH or LOGS_PATH == '~':
         LOGS_PATH = home_dir
 
-except Exception as e:
+except Exception:
     print('Configure config.ini file properly. More information in README.md!')
-    exit(1)

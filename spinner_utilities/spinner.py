@@ -29,7 +29,7 @@ class Spinner:
     busy = False
     delay = 0.1
 
-    def spinning_cursor(self):
+    def spinner_generator(self):
         while True:
             for frame in self.spinner_frames:
                 yield frame
@@ -60,12 +60,16 @@ class Spinner:
     def __init__(self, **kwargs):
         self.text = kwargs.get('text')
         self.color = kwargs.get('color')
-        self.spinner_frames = colorize_spinner(kwargs.get('color'), spinner_frames[kwargs.get('spinner_type')])
+        self.spinner_frames = colorize_frames(kwargs.get('color'), spinner_frames[kwargs.get('spinner_type')])
+        color = kwargs.get('color')
+        frames = spinner_frames.get(kwargs.get('spinner_type'))
+        self.spinner_frames = colorize_frames(color, frames)
+
         delay = kwargs.get('delay')
         if delay and float(delay):
             self.delay = delay
-        self.spinner_frames = spinner_frames[kwargs.get('spinner_type')]
-        self.spinner_generator = self.spinning_cursor()
+
+        self.spinner_generator = self.spinner_generator()
 
     def spinner_task(self):
         while self.busy:
@@ -76,6 +80,6 @@ class Spinner:
             time.sleep(self.delay)
 
 
-def colorize_spinner(color, frames):
+def colorize_frames(color, frames):
     if color in fg_colors.keys():
         return [f'{fg_colors[color]}{frame}\033[0m' for frame in frames]

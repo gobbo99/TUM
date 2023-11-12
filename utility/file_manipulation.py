@@ -16,5 +16,5 @@ def read_data_from_file(file_path, separator):
     except FileNotFoundError:
         print(f"File not found: {file_path}")
 
-    except Exception as e:
+    except Exception:
         pass

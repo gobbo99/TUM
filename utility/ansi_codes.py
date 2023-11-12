@@ -10,14 +10,14 @@ class AnsiCodes:
     REVERSE = '\033[7m'
 
     # Foreground colors
-    BLACK = '\033[30m'
-    RED = '\033[31m'
-    GREEN = '\033[32m'
-    YELLOW = '\033[33m'
-    BLUE = '\033[34m'
-    MAGENTA = '\033[35m'
-    CYAN = '\033[36m'
-    WHITE = '\033[37m'
+    BLACK = '\033[0;30m'
+    RED = '\033[0;31m'
+    GREEN = '\033[0;32m'
+    YELLOW = '\033[0;33m'
+    BLUE = '\033[0;34m'
+    MAGENTA = '\033[0;35m'
+    CYAN = '\033[0;36m'
+    WHITE = '\033[0;37m'
 
     # Bold foreground colors
     BBLACK = '\033[1;30m'
@@ -66,7 +66,7 @@ class AnsiCodes:
         return f'\033[{n}D'
 
     @staticmethod
-    def erase_line(n):
+    def erase_line(n):          # 0 - cursor to right, 1 - cursor to left, 2 - entire line
         return f'\033[{n}K'
 
     @staticmethod
@@ -82,7 +82,7 @@ SUCCESS = f"{AnsiCodes.YELLOW}[{AnsiCodes.BGREEN}√{AnsiCodes.YELLOW}]"
 ERROR = f"{AnsiCodes.YELLOW}[{AnsiCodes.BRED}X{AnsiCodes.YELLOW}]"
 INFO = f"{AnsiCodes.YELLOW}[{AnsiCodes.BRED}\u2022{AnsiCodes.YELLOW}]"
 WARNING = f"{AnsiCodes.YELLOW}[{AnsiCodes.BWHITE}!{AnsiCodes.YELLOW}]"
-MARKED = f"\033[4;40;93m"
+MARKED = "\033[4;40;93m"
 
 
 def slow_print(text, letter_time):

@@ -51,7 +51,7 @@ spinner_frames = {
         "██  "
     ],
 
-    "exit_spinner": [
+    "star_spinner": [
         "-",
         "/",
         "|",

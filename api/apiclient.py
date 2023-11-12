@@ -1,13 +1,13 @@
 import json
 import time
-from typing import Optional, Callable, List, Dict
+from typing import Optional, List, Dict
 from urllib.parse import urlparse
 
 import requests
-from requests.exceptions import *
+from requests.exceptions import HTTPError, RequestException, Timeout
 from urllib3.exceptions import LocationParseError
 
-from exceptions.tinyurl_exceptions import *
+from exceptions.tinyurl_exceptions import TinyUrlUpdateError, TinyUrlCreationError, NetworkError, RequestError
 from tunneling.tunnelservicehandler import TunnelServiceHandler
 from utility.url_tools import generate_string_5_30
 
@@ -152,14 +152,13 @@ class ApiClient:
             raise RequestError(f"Error: {e}")
         except Timeout:
             raise NetworkError('Connection error. Request timed out!')
-        except RequestException as e:
+        except RequestException:
             raise RequestError("Unknown url", url=url)
-        except RequestError:
-            raise ValueError('Incorrect url format!')
         except LocationParseError:
             raise RequestError("Incorrect url format", url=url)
 
-    def build_headers(self, token_index: Optional[int] = None, token: Optional[str] = None, headers: Optional[dict] = None) -> dict:  # can be async now
+    def build_headers(self, token_index: Optional[int] = None, token: Optional[str] = None,
+                      headers: Optional[dict] = None) -> dict:
         auth_token = token or self.alias_token_mapping.get(token_index)
         auth_headers = {'Authorization': f'Bearer {auth_token}',
                         'Content-Type': 'application/json',
@@ -167,10 +166,10 @@ class ApiClient:
                         }
         if not headers:
             headers = {}
-
         joint_headers = {**auth_headers, **headers}
         return joint_headers
 
+    """
     def _make_request(self,
                       token_id: int, request_call: Callable, request_url: str,
                       headers: Optional[dict] = None, data: Optional[dict] = None,
@@ -187,4 +186,4 @@ class ApiClient:
         else:
             pass
         pass
-
+"""

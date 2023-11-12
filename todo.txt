@@ -1,4 +1,0 @@
-Errors and invalid urls communicated to tum.
-
-Put input into seperate package when taking input from user to not congest the class
-delay ne radi instantno

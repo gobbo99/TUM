@@ -1,6 +1,9 @@
 from urllib.parse import urlparse
 
 import requests
+from requests.exceptions import *
+
+from utility.url_tools import get_final_domain
 
 
 def is_resource_available(url):
@@ -25,3 +28,17 @@ def get_valid_urls(urls):
         else:
             print(f'URL: {url} is not available. Discounted from list!')
     return valid_urls
+
+
+def check_redirect_url(url, target_url):
+    try:
+        response = requests.head(url, timeout=5, allow_redirects=True)
+        response_domain = get_final_domain(response.url)
+        target_domain = get_final_domain(target_url)
+        if response_domain == target_domain:
+            return url
+    except (HTTPError, Timeout, RequestException, ConnectionError):
+        return
+
+
+

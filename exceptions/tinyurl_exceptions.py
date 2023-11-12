@@ -1,3 +1,6 @@
+from utility.ansi_codes import AnsiCodes
+
+
 class TinyUrlPreviewException(Exception):
     def __init__(self, id, url):
         self.message = f'Preview page is blocking Tinyurl({id}) for {url}!'
@@ -15,7 +18,7 @@ class TinyUrlCreationError(Exception):
 
     def __str__(self):
         message = '\n'.join(self.errors)
-        return f'{red}Error HTTP code: [{self.status_code}]\n{message}'
+        return f'{AnsiCodes.RED}Error HTTP code: [{self.status_code}]\n{message}'
 
 
 class TinyUrlUpdateError(Exception):
@@ -25,7 +28,7 @@ class TinyUrlUpdateError(Exception):
 
     def __str__(self):
         message = '\n'.join(self.errors)
-        return f'{red}Error HTTP code: [{self.status_code}]\n{message}'
+        return f'{AnsiCodes.RED}Error HTTP code: [{self.status_code}]\n{message}'
 
 
 class InputException(Exception):
@@ -39,7 +42,7 @@ class InputException(Exception):
 
 class RequestError(Exception):
     def __init__(self, message, url=None):
-        self.message = f'{red}{message}'
+        self.message = f'{AnsiCodes.RED}{message}'
         self.url = url
         super().__init__(self.message)
 
@@ -49,7 +52,7 @@ class RequestError(Exception):
 
 class NetworkError(Exception):
     def __init__(self, message):
-        self.message = f'{red}{message}'
+        self.message = f'{AnsiCodes.RED}{message}'
         super().__init__(self.message)
 
     def __str__(self):

@@ -2,9 +2,9 @@ import logging
 from urllib.parse import urlparse
 
 from api.apiclient import ApiClient
-from utility import get_final_domain
+from utility.url_tools import get_final_domain
 
-logger = logging.getLogger('live')
+logger = logging.getLogger('')
 SUCCESS = 25
 
 
@@ -24,19 +24,17 @@ class TinyUrl:
         self.domain = get_final_domain(self.final_url)
         self.tinyurl = f"https://tinyurl.com/{data['alias']}"
         self.alias = data['alias']
-        logger.log(SUCCESS, f'Tinyurl({self.id}) created! {self.tinyurl} --> '
-                            f'{self.final_url}!')
+        logger.log(SUCCESS, f'Tinyurl[{self.id}] created --> {self.final_url}')
 
     def update_redirect(self, url: str, api_client: ApiClient):
         data = api_client.update_tinyurl_redirect_user(self.alias, url)
         self.final_url = f'https://{data["url"]}' if not urlparse(data['url']).scheme else data[
             'url']  # Because tinyurl response sometimes omits scheme
         self.domain = get_final_domain(self.final_url)
-        logger.log(SUCCESS, f'Tinyurl({self.id}) updated: {self.tinyurl} --> '
-                            f'{self.final_url}!')
+        logger.log(SUCCESS, f'Tinyurl[{self.id}] updated --> {self.final_url}')
 
     def __str__(self):
-        return f'\n\033[1;33mTinyurl[{self.id}]' \
-               f'\n__________________________________\033[0;33m' \
+        return f'\033[1;33mTinyurl[{self.id}]' \
+               f'\n__________________________________\033[0;33m'\
                f'\nurl:    {self.tinyurl}' \
                f'\ntarget: {self.final_url}'
