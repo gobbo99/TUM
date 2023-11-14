@@ -1,71 +1,77 @@
-
-## Tinyurl manager
+## TUM - Tinyurl manager
 
 ## Overview
-#### This python package enables you to instantly generate and control many tinyurl links and with randomly generated 8-character alias that goes after domain, e.g : tinyurl.com/4kj95b25
+ This package contains modern CLI for managing, generating, analyzing and automating everything concerning your tinyurls and their end target destination. 
+ 
+It features interactive ***Heartbeat*** service which serves as a validator that regularly performs checks on your tinyurls. 
 
-With this python package you are able to generate and control many tinyurl instances and ***ensure that preview page doesn't display*** for all your tinyurls. Tinyurl preview page blocks users from directly accessing your url.
-
-All you need to do is add your tokens to ./config/tokens.txt and you are ready to go!
+ It has very customized and tailored API which makes it a very powerful tool even if you don't use Tum CLI. 
 
 ### Prerequisites
 
-Python 3, Linux Gnome environment
+Python 3+ - python 3 and above mandatory
 
-GNOME Linux distro 
+Gnome/xfce-4 terminal for heartbeat service[Optional]
 
 ### Installation
 
-After you cloned repository do the following:
-
-```sudo apt install python3``` - Install python3
-
-```pip install -r requirements.txt``` - Install required dependencies
-
-```apt install gnome-terminal``` - Install gnome-terminal
 ***
-### Setup
-Place your authentication tokens in ***config/tokens.txt*** 
+In your directory where you cloned this repository do this:
 
-Optionally place alternate urls in ***config/urls.txt***
+```sudo apt install python3``` - Install python3 with apt
 
-Complete your run configuration in ***config/config.ini*** 
+```pip install -r requirements.txt``` - Install python dependencies
 
-### How it works
+***
+### Configuration
+
+Path for base configuration file is ***./config/config.ini***
+
+Path for your tokens file by default is ***./config/tokens.txt***
+
+Optionally place fallback urls in ***./config/fallback_urls.txt***
+
+Everything regarding configuration is in ***./config/config.ini***
+
+### CLI
 
 
-***create_redirect_url()*** - connects to tinyurl api and creates new tinyurl redirect to wanted url
+*Available commands:*
+_____________________________________________________________________________________
+`new <url>`      - Create a new TinyURL redirect URL
 
-***update_redirect()*** - updates redirect url to fallback url 
+`select <id>`    - Select a TinyURL instance by its ID
 
-***check_status()*** - periodically checks validity of redirect each tinyurl instance
+`update <url>`   - Update the redirect for the selected TinyURL
 
-***main_cli()*** - main function that runs continuously
+`delete <id>`    - Delete a TinyURL with the selected ID
 
-Log file ***'logile.log'*** is created or appended in .logs directory located in parent user home directory
+`current`        - Display the currently selected TinyURL instance(selector for update and delete commands)
+_____________________________________________________________________________________
+`delay <sec>`    - Change the pinging interval (e.g., 'delay 5s' or 'delay 1m')
 
-***NOTE***: Not intended for large amount of tinyurl instances. 
-If you don't need to manage tinyurl ***delete it with 'delete' command!***
+`ping`           - Ping sweep all TinyURLs and check their status
 
-### CLI COMMANDS
+`stop`           - Stop ping checking service
 
- Once you run the script you will have a cli which has following functionality:
+`start`          - Start ping checking service
 
-***new [url] [token_index]***- create new tinyurl instance that redirects to <url>, <token_index> is ***optional***
+`token <id>`     - Select a token by ID
 
-***del [id]*** - delete active tinyurl instance by it's assigned id
+`tokens`         - List available tokens
+_____________________________________________________________________________________
+`info`           - Display full information on active TinyURLs
 
-***select [id]*** - select active tinyurl instance by their id. Useful to manually update redirect. Use 'list' to see all instances.
+`list`           - List all active TinyURLs and other information
 
-***update [url]*** - updates redirect url of selected tinyurl instance
+`clear`          - Clear the screen
 
-***current*** - display information about current tinyurl instance and client info
+`help`           - Display this menu
 
-***list*** - list all created tinyurl instances
+`exit`           - Exit the program
+_____________________________________________________________________________________
+**[id] - [tinyurl id] - prompt**
 
-***help*** - display cli commands overview
-
-***exit*** - terminate the program, logs are saved in {home_dir}/.logs/logfile.log'
 ### CLI interface
 ![cli.png](cli.png)
 ### Logo reader terminal
