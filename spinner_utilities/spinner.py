@@ -56,11 +56,11 @@ class Spinner:
         self.busy = True
         SpinnerManager.active_spinner = self
         sys.stdout.write(AnsiCodes.remove_cursor())
-        threading.Thread(target=self.spinner_task).start()
+        self.thread = threading.Thread(target=self.spinner_task).start()
 
     def __exit__(self, exception, value, tb):
         self.busy = False
-        sys.stdout.write(AnsiCodes.erase_line(1))
+        sys.stdout.write(AnsiCodes.erase_line(2))
         sys.stdout.write(AnsiCodes.add_cursor())
         sys.stdout.write('\r')
         sys.stdout.flush()

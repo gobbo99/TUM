@@ -156,17 +156,15 @@ class TinyUrlManager:
             assigned_id = 1
         return assigned_id
 
-    def process_item(self):
-        try:
-            data = self.shared_queue.get()
-            self.shared_queue.task_done()
-        except Empty:
-            raise Empty
-        for key, data in data.items():
+    def process_item(self, data):
+        for key, value in data.items():
+            if key == 'delete':
+                self.id_tinyurl_mapping.pop(value)
+                return value
             for tinyurl in self.id_tinyurl_mapping.values():
                 if key == tinyurl.alias:
-                    tinyurl.final_url = data['full_url']
-                    tinyurl.domain = data['domain']
+                    tinyurl.final_url = value['full_url']
+                    tinyurl.domain = value['domain']
 
     def _enqueue(self, data: dict):
         while self.feedback_event.is_set():

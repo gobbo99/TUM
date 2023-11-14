@@ -43,8 +43,6 @@ class HeartbeatService:
                                                 for key, value in nested_dict.items()})
             self.tinyurl_id_mapping.update({url: inner_key for inner_key, nested_dict in load_data.items()
                                             for url in nested_dict})
-            logger.warning(self.tinyurl_target_mapping.items())
-            logger.warning(self.tinyurl_id_mapping.items())
         self.errors = {}
         self.preview_errors = {}
         self.terminate = False
@@ -121,7 +119,7 @@ class HeartbeatService:
             if self.preview_errors:
                 error_urls = [url for url in self.preview_errors]
                 error_ids.extend(id for id in [self.tinyurl_id_mapping[url] for url in error_urls])
-                error_ids = ','.join(['[' + str(id) + ']' for id in error_ids])
+                error_ids = ','.join(['ID[' + str(id) + ']' for id in error_ids])
                 logger.warning(f"Tinyurls with errors: {error_ids}")
 
     def _fix_errors_thread_pool(self):
@@ -143,8 +141,8 @@ class HeartbeatService:
         :param tinyurl:
         :return:
         """
-
-        logger.info(f'Fixing Tinyurl [{self.tinyurl_id_mapping[tinyurl]}]...')
+        if self.preview_errors:
+            logger.info(f'Fixing for Tinyurl [{self.tinyurl_id_mapping[tinyurl]}]...')
         alias = tinyurl.split('/')[-1]
         target_url = self.tinyurl_target_mapping[tinyurl]
         if not flag:
@@ -154,6 +152,7 @@ class HeartbeatService:
                 if self.ping_check(tinyurl):
                     self.preview_errors.pop(tinyurl, None)
                     self.errors.pop(tinyurl, None)
+                    return
             except (TinyUrlUpdateError, NetworkError, HTTPError, RequestError, ValueError):
                 pass
         attempts = 0
@@ -179,6 +178,7 @@ class HeartbeatService:
                     logger.warning(e)
                     attempts += 1
                     self.api_client.tunneling_service.cycle_next()
+        self.delete_instance(tinyurl)
 
     def _consume_all(self):
         while True:
@@ -231,6 +231,15 @@ class HeartbeatService:
 
     def load_list(self, tinyurl_target: dict):
         self.tinyurl_target_mapping.update(tinyurl_target)
+
+    def delete_instance(self, tinyurl):
+        logger.warning(f'Faulty Tinyurl[{self.tinyurl_id_mapping[tinyurl]}] deleted!')
+        deleted_id = self.tinyurl_id_mapping.pop(tinyurl)
+        self.tinyurl_target_mapping.pop(tinyurl)
+        self.errors.pop(tinyurl, None)
+        self.preview_errors.pop(tinyurl, None)
+        queue_data = {'delete':  deleted_id}
+        self._enqueue_data(queue_data)
 
     def _start_terminal_logger(self):
         terminal = settings.TERMINAL_EMULATOR

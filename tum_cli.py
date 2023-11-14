@@ -52,18 +52,19 @@ ________________________________________________________________________________
 _____________________________________________________________________________________
 {AnsiCodes.BYELLOW}[id] {AnsiCodes.BWHITE} - {AnsiCodes.YELLOW}[tinyurl id] - prompt
 """
+#  todo:  an event that notifies tum manager that heartbeat service has altered data so that it can
+#  todo:  immediately notify user and prompt him again
 
 
 class TumCLI(TinyUrlManager):
+
     def __init__(self, shared_queue: Queue, control_event: Event, feedback_event: Event):
         super().__init__(shared_queue, control_event, feedback_event)
 
     def handle_user_input(self):
         global service_active
         global service_threads
-        prompt = (f"\n{AnsiCodes.BYELLOW}[{AnsiCodes.BWHITE}{self.selected_id or 'X'}"
-                  f"{AnsiCodes.BYELLOW}]{AnsiCodes.WHITE} >{AnsiCodes.WHITE} ")
-        user_input = input(prompt)
+        user_input = input(make_prompt(self.selected_id))
         parsed_input = re.split(r"\s+", user_input)
         command = parsed_input[0]
         if command == 'new':
@@ -168,11 +169,12 @@ class TumCLI(TinyUrlManager):
                         num = num * 60
                     if unit in ['h', 'hrs', 'hours']:
                         num = num * 3600
-                    with Spinner(text='Changing delay...', spinner_type='pulse_horizontal', color='cyan', delay=0.04):
+                    with Spinner(text='Changing delay...', spinner_type='star_spinner', color='cyan', delay=0.04):
                         self.control_event.set()
                         self.shared_queue.put({'delay': num})
+                        time.sleep(1)
                     self.ping_interval = num
-                    print(f'{AnsiCodes.GREEN}Pinging interval changed to {num} seconds!')
+                    print(f'{AnsiCodes.GREEN}Pinging interval changed to {num} seconds!', flush=False)
                 except (IndexError, ValueError, AttributeError):
                     specific = f'{AnsiCodes.WHITE}Correct format: {AnsiCodes.BYELLOW}[ delay <seconds> or delay <minutes>m]'
                     raise InputException(' '.join(parsed_input), specific)
@@ -185,7 +187,7 @@ class TumCLI(TinyUrlManager):
                     self.control_event.set()
                     self.shared_queue.put({'ping': 0})
                     time.sleep(2)
-                    print(f'{AnsiCodes.erase_line(2) +  AnsiCodes.GREEN}\rPing sweeping done. See logs!')
+                print(f'{AnsiCodes.GREEN}Ping sweeping done. See logs!')
             else:
                 print(f'{AnsiCodes.RED}Service inactive!')
 
@@ -210,7 +212,7 @@ class TumCLI(TinyUrlManager):
                     heartbeat = HeartbeatService(self.shared_queue, self.control_event, self.feedback_event,
                                                  self.api_client, load_data=load_data)
                     t1 = Thread(target=heartbeat.start_heartbeat_service, daemon=True)
-                    t2 = Thread(target=self.listen_for_event, daemon=True)
+                    t2 = Thread(target=self.listen_for_feedback_event, daemon=True)
                     t1.start()
                     t2.start()
                     service_threads = [t1, t2]
@@ -247,11 +249,18 @@ class TumCLI(TinyUrlManager):
     Thread that monitors and processes external data from service that runs as t3.
     If feedback event is set  
     """
-    def listen_for_event(self):
+    def listen_for_feedback_event(self):
         while True:
             self.feedback_event.wait()
             try:
-                self.process_item()
+                data = self.shared_queue.get()
+                result = self.process_item(data)
+                if result:
+                    print(f'{AnsiCodes.erase_line(2)}\rTinyurl[{result}] deleted by heartbeat service!', flush=True)
+                    print(make_prompt(self.selected_id))
+                    if self.selected_id == result:
+                        self.selected_id = None
+                self.shared_queue.task_done()
             except Empty:
                 print('Error fetching service data!')
             finally:
@@ -305,6 +314,12 @@ def create_log_file():
     return final_path
 
 
+def make_prompt(id=None):
+    prompt = (f"\n{AnsiCodes.BYELLOW}[{AnsiCodes.BWHITE}{id or 'X'}"
+              f"{AnsiCodes.BYELLOW}]{AnsiCodes.WHITE} >{AnsiCodes.WHITE} ")
+    return prompt
+
+
 def initialize_loggers():
     use_logger = settings.LOGGER
     logs_path = Path(settings.LOGS_PATH)
@@ -352,7 +367,7 @@ def initialize(service):
     heartbeat = HeartbeatService(shared_queue, control_event, feedback_event, tum.api_client)
 
     if service:
-        t1 = Thread(target=tum.listen_for_event, daemon=True)
+        t1 = Thread(target=tum.listen_for_feedback_event, daemon=True)
         t2 = Thread(target=heartbeat.start_heartbeat_service, daemon=True)
         t1.start()
         t2.start()
