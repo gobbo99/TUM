@@ -40,10 +40,10 @@ class Spinner:
             @functools.wraps(func)
             def wrapper(instance, *args, **kwargs) -> Any:
                 if instance.use_spinner:
-                    return func(instance, *args, **kwargs)
-                else:
                     with self:
-                        return func(*args, **kwargs)
+                        return func(instance, *args, **kwargs)
+                else:
+                    return func(instance, *args, **kwargs)
         else:
             def wrapper(*args, **kwargs) -> Any:
                 with self:

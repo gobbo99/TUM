@@ -185,6 +185,7 @@ class TumCLI(TinyUrlManager):
                     self.control_event.set()
                     self.shared_queue.put({'ping': 0})
                     time.sleep(2)
+                    print(f'{AnsiCodes.erase_line(2) +  AnsiCodes.GREEN}\rPing sweeping done. See logs!')
             else:
                 print(f'{AnsiCodes.RED}Service inactive!')
 

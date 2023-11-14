@@ -9,9 +9,9 @@ It features interactive ***Heartbeat*** service which serves as a validator that
 
 ### Prerequisites
 
-Python 3+ - python 3 and above mandatory
+**Python 3**+ - mandatory interpreter
 
-Gnome/xfce-4 terminal for heartbeat service[Optional]
+**Gnome/xfce-4 terminal** - installed on runtime
 
 ### Installation
 
@@ -32,8 +32,8 @@ Path for your tokens file by default is ***./config/tokens.txt***
 Optionally place fallback urls in ***./config/fallback_urls.txt***
 
 Everything regarding configuration is in ***./config/config.ini***
-
-### CLI
+***
+### Command line interface
 
 
 *Available commands:*
@@ -70,11 +70,18 @@ ________________________________________________________________________________
 
 `exit`           - Exit the program
 _____________________________________________________________________________________
-**[id] - [tinyurl id] - prompt**
 
-### CLI interface
-![cli.png](cli.png)
-### Logo reader terminal
-![log_read.png](log_read.png)
+#### How does cli look like in gnome-terminal...
+![cli.png](cli.jpg)
+### Heartbeat service
+Imagine uploading...O
 
-If you have any questions, feel free to message me
+### Contributing
+
+We welcome contributions to improve and enhance this project! To contribute, follow these steps:
+
+### License
+This project is licensed under the MIT License.
+
+### Contact
+If you have any suggestions, feedback, don't hesitate reach out.

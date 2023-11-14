@@ -17,7 +17,6 @@ from spinner_utilities.spinner import Spinner
 
 AUTH_TOKENS = settings.AUTH_TOKENS
 TUNNELING_SERVICE_URLS = settings.TUNNELING_SERVICE_URLS
-#  maybe move inside class
 
 
 class TinyUrlManager:
