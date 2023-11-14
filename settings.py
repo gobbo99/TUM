@@ -1,5 +1,6 @@
 import configparser
 from pathlib import Path
+import sys
 
 from utility.file_manipulation import read_data_from_file
 
@@ -24,7 +25,7 @@ try:
     LOGGER = config_file['Options'].get('logger').strip() or 'no'
     LOGGER = False if LOGGER == 'no' else True
 
-    AUTH_TOKENS = read_data_from_file(TOKENS_PATH, TOKENS_SEPERATOR)
+    AUTH_TOKENS = read_data_from_file(TOKENS_PATH, TOKENS_SEPERATOR, allow_empty=False)
     TUNNELING_SERVICE_URLS = read_data_from_file(FALLBACK_URLS_PATH, FALLBACK_URLS_SEPERATOR)
 
     if not LOGS_PATH or LOGS_PATH == '~':
@@ -32,3 +33,4 @@ try:
 
 except Exception:
     print('Configure config.ini file properly. More information in README.md!')
+    sys.exit()

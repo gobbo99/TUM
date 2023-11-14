@@ -256,8 +256,9 @@ class TumCLI(TinyUrlManager):
                 data = self.shared_queue.get()
                 result = self.process_item(data)
                 if result:
-                    print(f'{AnsiCodes.erase_line(2)}\rTinyurl[{result}] deleted by heartbeat service!', flush=True)
-                    print(make_prompt(self.selected_id))
+                    print(f'{AnsiCodes.RED + AnsiCodes.erase_line(2)}\rTinyurl[{result}] deleted by heartbeat service!'
+                          , flush=True)
+                    print(make_prompt(self.selected_id), end='')
                     if self.selected_id == result:
                         self.selected_id = None
                 self.shared_queue.task_done()
@@ -320,21 +321,6 @@ def make_prompt(id=None):
     return prompt
 
 
-def initialize_loggers():
-    use_logger = settings.LOGGER
-    logs_path = Path(settings.LOGS_PATH)
-    log_dir = logs_path / '.tum_logs'
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    if use_logger:
-        full_path = create_log_file()
-        initialize_file_logger(full_path)
-
-    temp_path = log_dir / 'temp'
-    temp_path.touch()
-    initialize_live_logger(temp_path)
-
-
 def initialize_live_logger(path):
     color_formatter = logconfig.ColoredFormatter()
     temp_handler = logconfig.LiveFeedHandler(path)
@@ -352,11 +338,26 @@ def initialize_file_logger(path):
     logger.addHandler(file_handler)
 
 
+def initialize_loggers():
+    use_logger = settings.LOGGER
+    logs_path = Path(settings.LOGS_PATH)
+    log_dir = logs_path / '.tum_logs'
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    if use_logger:
+        full_path = create_log_file()
+        initialize_file_logger(full_path)
+
+    temp_path = log_dir / 'temp'
+    temp_path.touch()
+    initialize_live_logger(temp_path)
+
+
 @click.command()
 @click.option('--service/--no-service', default=True, required=False)
-@Spinner(text='Loading configuration...', spinner_type='pulse_horizontal_long', color='cyan', delay=0.03)
+@Spinner(text='Loading configuration...', spinner_type='pulse_horizontal_long', color='green', delay=0.03)
 def initialize(service):
-    time.sleep(1)
+    initialize_loggers()
     global service_active
     global service_threads
     service_active = service
@@ -378,7 +379,7 @@ def initialize(service):
 
 
 if __name__ == '__main__':
-    initialize_loggers()
+    print('\n')
     tum_cli = initialize(standalone_mode=False)
     try:
         tum_cli.user_interface()

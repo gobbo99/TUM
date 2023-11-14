@@ -166,12 +166,15 @@ class HeartbeatService:
                                                                            retry=1, timeout=3)
                     full_url = 'https://' + data['url'] if not urlparse(data['url']).scheme else data['url']
                     target_domain = get_final_domain(data['url'])
+                    self.tinyurl_target_mapping[tinyurl] = get_final_domain(data['url'])
+                    if self.ping_check(tinyurl):
+                        self.preview_errors.pop(tinyurl, None)
+                        self.errors.pop(tinyurl, None)
                     self.tinyurl_target_mapping[tinyurl] = target_domain
                     self.preview_errors.pop(tinyurl, None)
                     self.errors.pop(tinyurl, None)
                     logger.log(SUCCESS, f'Tinyurl [{self.tinyurl_id_mapping[tinyurl]}] '
                                         f'updated to new redirect domain: https://{target_domain}')
-                    self.queue_data[alias] = {'domain': target_domain, 'full_url': full_url}
                     break
                 except (TinyUrlUpdateError, NetworkError, RequestError, ValueError) as e:
                     time.sleep(random.uniform(2, 6))
@@ -238,8 +241,8 @@ class HeartbeatService:
         self.tinyurl_target_mapping.pop(tinyurl)
         self.errors.pop(tinyurl, None)
         self.preview_errors.pop(tinyurl, None)
-        queue_data = {'delete':  deleted_id}
-        self._enqueue_data(queue_data)
+        self.queue_data = {'delete':  deleted_id}
+        self._enqueue_data()
 
     def _start_terminal_logger(self):
         terminal = settings.TERMINAL_EMULATOR

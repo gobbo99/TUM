@@ -131,7 +131,7 @@ class TinyUrlManager:
 
     def print_all(self):
         for tinyurl in self.id_tinyurl_mapping.values():
-            print(f'{AnsiCodes.YELLOW}{tinyurl}')
+            print(f'\n{AnsiCodes.YELLOW}{tinyurl}')
 
     def print_short(self):
         for id, tinyurl in sorted(self.id_tinyurl_mapping.items()):
@@ -146,7 +146,7 @@ class TinyUrlManager:
         for index, token in enumerate(self.auth_tokens):
             print(f'{AnsiCodes.WHITE}{index + 1}. - {token}')
         print(
-            f'\n{AnsiCodes.BWHITE}Current token:\n{AnsiCodes.GREEN}{self.token_id}. - {self.api_client.auth_tokens[self.token_id - 1]}')
+            f'\n{AnsiCodes.BWHITE}Current token:\n{self.token_id}. - {AnsiCodes.GREEN}{self.api_client.auth_tokens[self.token_id - 1]}')
 
     def get_next_available_id(self):
         if self.id_tinyurl_mapping.keys():

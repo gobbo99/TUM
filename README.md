@@ -11,7 +11,7 @@ It features interactive ***Heartbeat*** service which serves as a validator that
 
 **Python 3**+ - mandatory interpreter
 
-**Gnome/xfce-4 terminal** - installed on runtime
+**Gnome/xfce-4 terminal** - Required for heartbeat service
 
 ### Installation
 
@@ -21,6 +21,13 @@ In your directory where you cloned this repository do this:
 ```sudo apt install python3``` - Install python3 with apt
 
 ```pip install -r requirements.txt``` - Install python dependencies
+
+```python3.10 tum_cli.py``` - Run tum_cli with python interpreter
+
+If you just want to integrate tinyurl api into your python project to create, update, load and create tinyurls from lists, display information and more do the following:
+
+```pip install /path``` - 
+
 
 ***
 ### Configuration
