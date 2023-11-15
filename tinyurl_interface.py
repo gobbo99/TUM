@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
 from typing import List
+#  todo
 
 
-class TinyUrlAPI(ABC):
+class TinyUrlManagerAPI(ABC):
     @abstractmethod
     def create_tinyurl(self, url: str, urls: [] = None):
         pass
@@ -16,7 +17,7 @@ class TinyUrlAPI(ABC):
         pass
 
     @abstractmethod
-    def make_from_list(self, urls: List[str]):
+    def create_from_list(self, urls: List[str]):
         pass
 
     @abstractmethod

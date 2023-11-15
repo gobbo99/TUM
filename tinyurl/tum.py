@@ -1,22 +1,18 @@
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait, ALL_COMPLETED, TimeoutError
-from queue import Queue, Empty, Full
+from queue import Queue, Full
 from threading import Event
 from typing import List, Dict, Optional
 from urllib.parse import urlparse
 
-import settings
 from api.apiclient import ApiClient
 from exceptions.tinyurl_exceptions import TinyUrlCreationError, TinyUrlUpdateError, NetworkError, \
     RequestError, UnwantedDomain, NetworkException
-from tinyurl import TinyUrl
+from .tinyurl import TinyUrl
 from utility.ansi_codes import AnsiCodes
 from utility.url_network_tools import get_valid_urls, check_redirect_url
 from spinner_utilities.spinner import Spinner
-
-AUTH_TOKENS = settings.AUTH_TOKENS
-TUNNELING_SERVICE_URLS = settings.TUNNELING_SERVICE_URLS
 
 
 class TinyUrlManager:
@@ -25,19 +21,19 @@ class TinyUrlManager:
     def __init__(self, shared_queue: Queue = None, control_event: Event = None, feedback_event: Event = None,
                  app_config: Dict[str, List[str]] = None):
 
-        if app_config:
-            self.auth_tokens: List[str] = app_config.get('tokens')
-            self.fallback_urls: List[str] = app_config.get('urls', [])
-            self.use_spinner = False
-        else:
+        if shared_queue:
             self.shared_queue: Optional[Queue] = shared_queue
             self.control_event: Optional[Event] = control_event
             self.feedback_event: Optional[Event] = feedback_event
-            self.fallback_urls: List[str] = get_valid_urls(TUNNELING_SERVICE_URLS)
-            self.auth_tokens: List[str] = AUTH_TOKENS
-            self.ping_interval: int = settings.PING_INTERVAL
+            self.fallback_urls: List[str] = get_valid_urls(app_config.get('fallback_urls'))
+            self.auth_tokens: List[str] = app_config['auth_tokens']
+            self.ping_interval: int = app_config['ping_interval']
             self.selected_id = None
             self.use_spinner = True
+        else:
+            self.auth_tokens: List[str] = app_config.get('auth_tokens')
+            self.fallback_urls: List[str] = app_config.get('fallback_urls', [])
+            self.use_spinner = False
 
         self.id_tinyurl_mapping = OrderedDict()
         self.api_client = ApiClient(self.auth_tokens, self.fallback_urls)

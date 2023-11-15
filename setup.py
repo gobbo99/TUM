@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='Tum',
+    name='tum',
     version='2.0',
     description='Tinyurl manager',
     packages=find_packages(),
@@ -11,8 +11,6 @@ setup(
     long_description=open('README.md').read(),
     license='MIT',
     install_requires=[
-        # List your dependencies here
-        'click',
         'requests',
         'terminaltexteffects'
     ],

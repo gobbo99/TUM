@@ -13,7 +13,6 @@ from urllib.parse import urlparse
 import requests
 from requests.exceptions import RequestException, HTTPError, Timeout
 
-import settings
 from api.apiclient import ApiClient
 from utility import package_installer
 from utility.url_tools import get_final_domain
@@ -22,17 +21,20 @@ from exceptions.tinyurl_exceptions import TinyUrlUpdateError, NetworkError, Requ
 
 SUCCESS = 25
 logger = logging.getLogger('')
-MAX_THREADS = settings.MAX_THREADS
+app_config = None
 
 
 class HeartbeatService:
+
     def __init__(self, shared_queue: Queue, control_event: Event, feedback_event: Event,
-                 api_client: ApiClient = None, load_data: dict = None):
+                 api_client: ApiClient = None, load_data: dict = None, config: dict = None):
+        global app_config
+        app_config = config
         self.control_event = control_event
         self.feedback_event = feedback_event
         self.shared_queue = shared_queue
-        self.delay = settings.PING_INTERVAL
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_THREADS)
+        self.delay = app_config['ping_interval']
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=app_config['ping_interval'])
         self.queue_data = {}
         self.last_sweep = time.time()
         self.api_client = api_client
@@ -181,16 +183,8 @@ class HeartbeatService:
                     logger.warning(e)
                     attempts += 1
                     self.api_client.tunneling_service.cycle_next()
-        self.delete_instance(tinyurl)
-
-    def _consume_all(self):
-        while True:
-            try:
-                data = self.shared_queue.get_nowait()
-                self._process_data(data)
-                self.shared_queue.task_done()
-            except Empty:
-                break
+        if self.tinyurl_target_mapping.get(tinyurl):  # Check if it has been deleted by main script
+            self.delete_instance(tinyurl)
 
     def _get_next_item(self):
         try:
@@ -204,7 +198,6 @@ class HeartbeatService:
         while self.control_event.is_set():
             time.sleep(0.1)
         try:
-            self.shared_queue.join()
             self.shared_queue.put(self.queue_data)
             self.feedback_event.set()
             self.shared_queue.join()
@@ -245,8 +238,8 @@ class HeartbeatService:
         self._enqueue_data()
 
     def _start_terminal_logger(self):
-        terminal = settings.TERMINAL_EMULATOR
-        path = settings.LOGS_PATH + '/.tum_logs/temp'
+        terminal = app_config['terminal_emulator']
+        path = app_config['logs_path'] + '/.tum_logs/temp'
         if terminal == 'gnome':
             package_installer.install_gnome_terminal()
             self.process = Popen(['gnome-terminal', '--disable-factory', '--', 'tail', '-f', f'{path}'],

@@ -22,28 +22,33 @@ In your directory where you cloned this repository do this:
 
 ```pip install -r requirements.txt``` - Install python dependencies
 
-```python3.10 tum_cli.py``` - Run tum_cli with python interpreter
-
+```python3.10 main.py``` - Run tum cli with python3+ interpreter
+***
 If you just want to integrate tinyurl api into your python project to create, update, load and create tinyurls from lists, display information and more do the following:
 
-```pip install /path``` - 
+```pip install /project/path/``` - Now tinyurl packages will be installed along any necessary dependencies
 
+```import tinyurl ``` - import tinyurl package
+
+```tum = tinyurl.TinyUrlManager(app_config=your_config) ```
+
+```result = tum.create_from_list(urls)``` - example function
 
 ***
 ### Configuration
 
-Path for base configuration file is ***./config/config.ini***
+Path for base configuration file is project directory ***./config.ini***
 
-Path for your tokens file by default is ***./config/tokens.txt***
+Everything regarding app configuration is located here.
 
-Optionally place fallback urls in ***./config/fallback_urls.txt***
+Put your ***tokens.txt*** and optionally urls.txt file in this(project) directory.
 
-Everything regarding configuration is in ***./config/config.ini***
+
 ***
 ### Command line interface
 
 
-*Available commands:*
+*Available commands in CLI  :*
 _____________________________________________________________________________________
 `new <url>`      - Create a new TinyURL redirect URL
 
@@ -59,9 +64,9 @@ ________________________________________________________________________________
 
 `ping`           - Ping sweep all TinyURLs and check their status
 
-`stop`           - Stop ping checking service
+`stop`           - Stop and close ping checking service
 
-`start`          - Start ping checking service
+`start`          - Start and close ping checking service
 
 `token <id>`     - Select a token by ID
 

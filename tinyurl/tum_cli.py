@@ -1,32 +1,18 @@
-import datetime
 import os
 import random
 import re
 import subprocess
 import sys
 import time
-import logging
-from pathlib import Path
 from queue import Queue, Empty
 from threading import Thread, Event
 from urllib.parse import urlparse
 
-import click
-
-import logconfig
-import settings
 from exceptions.tinyurl_exceptions import TinyUrlCreationError, TinyUrlUpdateError, InputException
 from services.heartbeat import HeartbeatService
 from spinner_utilities.spinner import Spinner
-from tum import TinyUrlManager
+from .tum import TinyUrlManager
 from utility.ansi_codes import AnsiCodes, slow_print
-
-logging.addLevelName(25, 'SUCCESS')
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
-service_threads = []
-service_active = None
 
 menu = f"""
 {AnsiCodes.BYELLOW}SYNOPSIS:
@@ -52,14 +38,16 @@ ________________________________________________________________________________
 _____________________________________________________________________________________
 {AnsiCodes.BYELLOW}[id] {AnsiCodes.BWHITE} - {AnsiCodes.YELLOW}[tinyurl id] - prompt
 """
-#  todo:  an event that notifies tum manager that heartbeat service has altered data so that it can
-#  todo:  immediately notify user and prompt him again
+
+service_threads = []
+service_active = True
+app_config = None
 
 
 class TumCLI(TinyUrlManager):
 
-    def __init__(self, shared_queue: Queue, control_event: Event, feedback_event: Event):
-        super().__init__(shared_queue, control_event, feedback_event)
+    def __init__(self, shared_queue: Queue, control_event: Event, feedback_event: Event, config):
+        super().__init__(shared_queue, control_event, feedback_event, app_config=config)
 
     def handle_user_input(self):
         global service_active
@@ -210,7 +198,7 @@ class TumCLI(TinyUrlManager):
                     for key, value in self.id_tinyurl_mapping.items():
                         load_data.update({key: {value.tinyurl: value.domain}})
                     heartbeat = HeartbeatService(self.shared_queue, self.control_event, self.feedback_event,
-                                                 self.api_client, load_data=load_data)
+                                                 self.api_client, load_data=load_data, config=app_config)
                     t1 = Thread(target=heartbeat.start_heartbeat_service, daemon=True)
                     t2 = Thread(target=self.listen_for_feedback_event, daemon=True)
                     t1.start()
@@ -226,7 +214,7 @@ class TumCLI(TinyUrlManager):
             print(menu)
 
         elif command == 'exit':
-            exit_text = f"Thank you for using TUM!\u2665\n[TUM version {settings.VERSION}]".encode('utf-8')
+            exit_text = f"Thank you for using TUM!\u2665\n[TUM version 2.0]".encode('utf-8')
             animations = ['waves', 'decrypt', 'blackhole', 'burn']
             command = f'tte {random.choice(animations)}'
             subprocess.run(command, input=exit_text, shell=True)
@@ -252,8 +240,10 @@ class TumCLI(TinyUrlManager):
     def listen_for_feedback_event(self):
         while True:
             self.feedback_event.wait()
+            self.feedback_event.clear()
             try:
                 data = self.shared_queue.get()
+                self.shared_queue.task_done()
                 result = self.process_item(data)
                 if result:
                     print(f'{AnsiCodes.RED + AnsiCodes.erase_line(2)}\rTinyurl[{result}] deleted by heartbeat service!'
@@ -261,14 +251,12 @@ class TumCLI(TinyUrlManager):
                     print(make_prompt(self.selected_id), end='')
                     if self.selected_id == result:
                         self.selected_id = None
-                self.shared_queue.task_done()
+
             except Empty:
                 print('Error fetching service data!')
-            finally:
-                self.feedback_event.clear()
 
-    def user_interface(self):
-        slow_print(f'{AnsiCodes.BYELLOW}TUM[{settings.VERSION}] {AnsiCodes.CYAN}\u2665{AnsiCodes.RESET}', 0.04)
+    def take_user_input(self):
+        slow_print(f'{AnsiCodes.BYELLOW}TUM[2.0] {AnsiCodes.CYAN}\u2665{AnsiCodes.RESET}', 0.04)
         slow_print('__________', 0.04)
         print(menu, end='')
         keep_running = True
@@ -290,7 +278,7 @@ class TumCLI(TinyUrlManager):
     @Spinner(text='Shutting down...', spinner_type='star_spinner', color='cyan', delay=0.03)
     def handle_keyboard_interrupt(self):
         sys.stdout.write(AnsiCodes.move_cursor_up(1) + AnsiCodes.erase_line(2))
-        print(f'\n{AnsiCodes.BWHITE}Thank you for using TUM!{AnsiCodes.CYAN}\u2665\n{AnsiCodes.BYELLOW}[TUM version {settings.VERSION}]')
+        print(f'\n{AnsiCodes.BWHITE}Thank you for using TUM!{AnsiCodes.CYAN}\u2665\n{AnsiCodes.BYELLOW}[TUM version 2.0]')
         if service_active:
             self.control_event.set()
             self.shared_queue.put({'exit': True})
@@ -298,21 +286,11 @@ class TumCLI(TinyUrlManager):
         time.sleep(1)  # Still needs time to process shutdown
 
 
-def handle_invalid_input(input, specific: str = None):  # move
+def handle_invalid_input(input, specific: str = None):
     print(f'{AnsiCodes.RED}Invalid input: {AnsiCodes.RESET}{input}')
     if specific:
         print(specific)
     print(f"{AnsiCodes.WHITE}Type 'help' to display options!")
-
-
-def create_log_file():
-    created_at = datetime.datetime.now().strftime('%c') + '.txt'
-    logs_path = Path(settings.LOGS_PATH)
-    log_dir = logs_path / '.tum_logs'
-    log_dir.mkdir(parents=True, exist_ok=True)
-    final_path = log_dir / created_at
-    final_path.touch()
-    return final_path
 
 
 def make_prompt(id=None):
@@ -321,69 +299,21 @@ def make_prompt(id=None):
     return prompt
 
 
-def initialize_live_logger(path):
-    color_formatter = logconfig.ColoredFormatter()
-    temp_handler = logconfig.LiveFeedHandler(path)
-    temp_handler.setFormatter(color_formatter)
-    logger.setLevel(logging.INFO)
-    logger.addHandler(temp_handler)
-
-
-def initialize_file_logger(path):
-    log_format = "%(custom_time)s - %(levelname)s - %(message)s"
-    debug_formatter = logconfig.DebugFormatter(log_format)
-    file_handler = logging.FileHandler(path)
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(debug_formatter)
-    logger.addHandler(file_handler)
-
-
-def initialize_loggers():
-    use_logger = settings.LOGGER
-    logs_path = Path(settings.LOGS_PATH)
-    log_dir = logs_path / '.tum_logs'
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    if use_logger:
-        full_path = create_log_file()
-        initialize_file_logger(full_path)
-
-    temp_path = log_dir / 'temp'
-    temp_path.touch()
-    initialize_live_logger(temp_path)
-
-
-@click.command()
-@click.option('--service/--no-service', default=True, required=False)
 @Spinner(text='Loading configuration...', spinner_type='pulse_horizontal_long', color='green', delay=0.03)
-def initialize(service):
-    initialize_loggers()
-    global service_active
+def initialize(config):
     global service_threads
-    service_active = service
+    global app_config
+    app_config = config
     shared_queue = Queue()
     control_event = Event()
     feedback_event = Event()
-    tum = TumCLI(shared_queue, control_event, feedback_event)
-    heartbeat = HeartbeatService(shared_queue, control_event, feedback_event, tum.api_client)
-
-    if service:
+    tum = TumCLI(shared_queue, control_event, feedback_event, app_config)
+    heartbeat = HeartbeatService(shared_queue, control_event, feedback_event, tum.api_client, config=app_config)
+    if service_active:
         t1 = Thread(target=tum.listen_for_feedback_event, daemon=True)
         t2 = Thread(target=heartbeat.start_heartbeat_service, daemon=True)
         t1.start()
         t2.start()
     else:
         service_threads = []
-
     return tum
-
-
-if __name__ == '__main__':
-    print('\n')
-    tum_cli = initialize(standalone_mode=False)
-    try:
-        tum_cli.user_interface()
-    except KeyboardInterrupt:
-        tum_cli.handle_keyboard_interrupt()
-
-
